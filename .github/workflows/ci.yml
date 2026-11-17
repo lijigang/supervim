@@ -53,6 +53,9 @@ jobs:
       - name: Measure EventTap coverage
         run: scripts/event-tap-coverage.sh
 
+      - name: Measure Actuator coverage
+        run: scripts/actuator-coverage.sh
+
       - name: Assemble unsigned menu-bar app
         run: scripts/assemble-app.sh
 

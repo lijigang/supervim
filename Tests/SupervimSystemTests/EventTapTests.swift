@@ -130,6 +130,38 @@ final class EventTapTests: XCTestCase {
         XCTAssertEqual(scroll.decision?.actions, [CommandMap().action(for: .scrollDown)])
     }
 
+    func testMarkedScrollKeyDoesNotScroll() {
+        XCTAssertEqual(SynthesizedEventMark.userData, 0x5356_4D31)
+        let fixture = makeWiring(cache: safari)
+        let marked = fixture.wiring.handleSystemRecord(
+            keyRecord(keyCode: 0x26, unicode: "j", sourceUserData: SynthesizedEventMark.userData)
+        )
+        XCTAssertEqual(marked, SystemKeyOutcome(delivery: .passThrough, decision: nil))
+        XCTAssertEqual(fixture.scanner.scans, 0)
+        let user = fixture.wiring.handleSystemRecord(keyRecord(keyCode: 0x26, unicode: "j"))
+        XCTAssertEqual(user.delivery, .swallow)
+        XCTAssertEqual(user.decision?.actions, [CommandMap().action(for: .scrollDown)])
+    }
+
+    func testMarkedKeyDoesNotConsumePassNext() {
+        let fixture = makeWiring(cache: safari)
+        let arm = fixture.wiring.handleSystemRecord(
+            keyRecord(keyCode: 0x1E, flags: SystemModifierMask.control, unicode: "\u{1D}")
+        )
+        XCTAssertEqual(arm.decision?.actions, [.passNextKey])
+        let marked = fixture.wiring.handleSystemRecord(
+            keyRecord(keyCode: 0x26, unicode: "j", sourceUserData: SynthesizedEventMark.userData)
+        )
+        XCTAssertEqual(marked, SystemKeyOutcome(delivery: .passThrough, decision: nil))
+        XCTAssertEqual(fixture.scanner.scans, 0)
+        let stillArmed = fixture.wiring.handleSystemRecord(keyRecord(keyCode: 0x26, unicode: "j"))
+        XCTAssertEqual(stillArmed.delivery, .passThrough)
+        XCTAssertTrue(stillArmed.decision?.actions.isEmpty == true)
+        let scroll = fixture.wiring.handleSystemRecord(keyRecord(keyCode: 0x26, unicode: "j"))
+        XCTAssertEqual(scroll.delivery, .swallow)
+        XCTAssertEqual(scroll.decision?.actions, [CommandMap().action(for: .scrollDown)])
+    }
+
     func testPlainUnicodeWinsOverTheVirtualKeyCode() {
         let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x00, unicode: "j"))
         XCTAssertEqual(event, KeyEvent("j"))
@@ -200,6 +232,17 @@ final class EventTapTests: XCTestCase {
         )
     }
 
+    func testUnshiftedVirtualKeyRoundTrip() {
+        XCTAssertEqual(SystemKeyTranslation.virtualKeyCode(forUnshifted: "j"), 0x26)
+        XCTAssertEqual(SystemKeyTranslation.virtualKeyCode(forUnshifted: "["), 0x21)
+        XCTAssertEqual(SystemKeyTranslation.virtualKeyCode(forUnshifted: "]"), 0x1E)
+        XCTAssertEqual(SystemKeyTranslation.virtualKeyCode(forUnshifted: "f"), 0x03)
+        XCTAssertEqual(SystemKeyTranslation.virtualKeyCode(forUnshifted: "l"), 0x25)
+        XCTAssertEqual(SystemKeyTranslation.virtualKeyCode(forUnshifted: "c"), 0x08)
+        XCTAssertNil(SystemKeyTranslation.virtualKeyCode(forUnshifted: "J"))
+        XCTAssertNil(SystemKeyTranslation.virtualKeyCode(forUnshifted: "é"))
+    }
+
     func testMultiCharacterUnicodeFallsBackToTheVirtualKey() {
         let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x26, unicode: "jj"))
         XCTAssertEqual(event, KeyEvent("j"))
@@ -268,6 +311,7 @@ final class EventTapTests: XCTestCase {
         let text = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(text.contains("CGEvent.tapCreate"))
         XCTAssertTrue(text.contains("handleSystemRecord"))
+        XCTAssertTrue(text.contains("eventSourceUserData"))
         for token in ["scanFocus(", "AXUIElement", "URLSession", "print(", "os_log", "NSLog", "CGEvent.post"] {
             XCTAssertFalse(text.contains(token), token)
         }
@@ -313,9 +357,16 @@ private func keyRecord(
     kind: SystemEventKind = .keyDown,
     keyCode: UInt16 = 0,
     flags: UInt64 = 0,
-    unicode: String = ""
+    unicode: String = "",
+    sourceUserData: Int64 = 0
 ) -> SystemKeyRecord {
-    SystemKeyRecord(kind: kind, keyCode: keyCode, modifierFlags: flags, unicode: unicode)
+    SystemKeyRecord(
+        kind: kind,
+        keyCode: keyCode,
+        modifierFlags: flags,
+        unicode: unicode,
+        sourceUserData: sourceUserData
+    )
 }
 
 private final class MemoryFocusCache: FocusCacheReading, @unchecked Sendable {
