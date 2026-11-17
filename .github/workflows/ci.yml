@@ -68,6 +68,9 @@ jobs:
       - name: Measure command session coverage
         run: scripts/command-session-coverage.sh
 
+      - name: Measure permission guide coverage
+        run: scripts/permission-guide-coverage.sh
+
       - name: Assemble unsigned menu-bar app
         run: scripts/assemble-app.sh
 

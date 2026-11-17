@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T07:36:26.000Z",
-      "description": "Supervim 已批准任务。任务 1 到任务 9 已合并，状态为 done。任务 10、11 和 13 为 done。任务 12、14 和 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T07:45:00.000Z",
+      "description": "Supervim 已批准任务。任务 1 到任务 9 已合并，状态为 done。任务 10、11、13 和 14 为 done。任务 12 和 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -153,7 +153,7 @@
         "id": 14,
         "title": "权限引导",
         "description": "在缺少辅助功能或输入监控权限时引导用户打开设置。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [13],
         "priority": "medium",
         "details": "缺少 Accessibility 或 Input Monitoring 时显示引导，并给出系统设置链接。批准规格希望授权后无需重启即生效，同时要求标记平台可行性。Electron 的 AXManualAccessibility 不能当作本应用的保证；未签名二进制重新构建后可能需要重新授权。这些限制必须写给用户，不能改成已经保证免重启。",
