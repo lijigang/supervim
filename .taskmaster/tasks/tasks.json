@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T07:45:00.000Z",
-      "description": "Supervim 已批准任务。任务 1 到任务 9 已合并，状态为 done。任务 10、11、13 和 14 为 done。任务 12 和 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T07:52:36.000Z",
+      "description": "Supervim 已批准任务。任务 1 到任务 9 已合并，状态为 done。任务 10、11、12、13 和 14 为 done。任务 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -131,7 +131,7 @@
         "id": 12,
         "title": "快捷键帮助",
         "description": "用 ? 打开帮助，再用 ? 或 Esc 关闭。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [10],
         "priority": "medium",
         "details": "帮助复用透明、不激活的浮层。内容来自当前默认命令表，偏离 Vimium 的条目要能被读到。帮助打开时不应把按键写进日志或发送到网络。",

@@ -136,7 +136,8 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
 
     /// Maps a decision the event hook already returned. Does not scan.
     /// `beginHint` is `enterHint`, a hint key is `receiveHintKey`, and
-    /// `endHint` is `cancelHint`. Help is left for task 12.
+    /// `endHint` is `cancelHint`. `showHelp` stays ignored here.
+    /// `HelpController` claims that update.
     @discardableResult
     public func consume(_ decision: EventDecision, hintKeyCode: UInt16? = nil) -> HintOverlayResult {
         guard let update = decision.overlay else {
