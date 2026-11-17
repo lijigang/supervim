@@ -4,21 +4,21 @@ import XCTest
 /// Labels, filtering, activation, and cancellation for one hint session.
 /// No window, click, or accessibility walk happens here.
 final class HintSessionTests: XCTestCase {
-    func testOneTargetShowsUppercaseAAtTheOrigin() {
+    func testOneTargetShowsTheEasiestLetterAtTheOrigin() {
         let frame = HintRect(x: 10, y: 20, width: 8, height: 6)
         let session = HintSession(targets: [HintTarget(frame: frame, identifier: "0")], click: .plain)
         XCTAssertEqual(session.click, .plain)
         XCTAssertTrue(session.isActive)
         XCTAssertEqual(session.markers, [
-            HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6),
+            HintMarker(index: 0, text: "F", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6),
         ])
     }
 
     func testTypingTheOnlyLabelActivatesTheCenter() {
         var session = HintSession(targets: [sampleTarget(0)], click: .plain)
-        XCTAssertEqual(session.markers, [HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6)])
+        XCTAssertEqual(session.markers, [HintMarker(index: 0, text: "F", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6)])
         XCTAssertEqual(
-            session.handle(.character("a")),
+            session.handle(.character("f")),
             .activated(HintActivation(index: 0, click: .plain, point: HintPoint(x: 14, y: 23), identifier: "0"))
         )
         XCTAssertFalse(session.isActive)
@@ -29,52 +29,49 @@ final class HintSessionTests: XCTestCase {
     func testCommandClickKindIsRememberedOnActivation() {
         var session = HintSession(targets: [sampleTarget(0)], click: .command)
         XCTAssertEqual(
-            session.handle(.character("A")),
+            session.handle(.character("F")),
             .activated(HintActivation(index: 0, click: .command, point: HintPoint(x: 14, y: 23), identifier: "0"))
         )
     }
 
     func testPartialPrefixShowsMatchesWithoutActivating() {
-        var session = HintSession(targets: tenTargets(), click: .plain)
-        guard case .showing(let markers) = session.handle(.character("a")) else {
+        var session = HintSession(targets: Array(tenTargets().prefix(3)), click: .plain, alphabet: "ab")
+        guard case .showing(let markers) = session.handle(.character("b")) else {
             return XCTFail("a shared prefix should keep the hint open")
         }
-        XCTAssertEqual(markers, [
-            HintMarker(index: 0, text: "AA", anchor: HintPoint(x: 0, y: 0), elementWidth: 20, elementHeight: 10),
-            HintMarker(index: 9, text: "AS", anchor: HintPoint(x: 270, y: 0), elementWidth: 20, elementHeight: 10),
-        ])
+        XCTAssertEqual(markers.map(\.text), ["BA", "BB"])
         XCTAssertTrue(session.isActive)
         XCTAssertEqual(session.markers, markers)
     }
 
     func testCompletingTheSecondCharacterActivatesThatTarget() {
-        var session = HintSession(targets: tenTargets(), click: .command)
-        XCTAssertEqual(session.handle(.character("a")), .showing([
-            HintMarker(index: 0, text: "AA", anchor: HintPoint(x: 0, y: 0), elementWidth: 20, elementHeight: 10),
-            HintMarker(index: 9, text: "AS", anchor: HintPoint(x: 270, y: 0), elementWidth: 20, elementHeight: 10),
-        ]))
+        var session = HintSession(targets: Array(tenTargets().prefix(3)), click: .command, alphabet: "ab")
+        guard case .showing(let pending) = session.handle(.character("b")) else {
+            return XCTFail("b is a prefix")
+        }
+        XCTAssertEqual(pending.map(\.text), ["BA", "BB"])
         XCTAssertEqual(
-            session.handle(.character("s")),
+            session.handle(.character("a")),
             .activated(HintActivation(
-                index: 9,
+                index: 1,
                 click: .command,
-                point: HintPoint(x: 280, y: 5),
-                identifier: "9"
+                point: HintPoint(x: 40, y: 5),
+                identifier: "1"
             ))
         )
     }
 
     func testSingleLetterAmongLongerLabelsActivatesImmediately() {
-        var session = HintSession(targets: tenTargets(), click: .plain)
+        var session = HintSession(targets: Array(tenTargets().prefix(3)), click: .plain, alphabet: "ab")
         XCTAssertEqual(
-            session.handle(.character("d")),
-            .activated(HintActivation(index: 1, click: .plain, point: HintPoint(x: 40, y: 5), identifier: "1"))
+            session.handle(.character("a")),
+            .activated(HintActivation(index: 0, click: .plain, point: HintPoint(x: 10, y: 5), identifier: "0"))
         )
     }
 
     func testInvalidCharacterCancelsAndFurtherInputIsInactive() {
-        var session = HintSession(targets: tenTargets(), click: .plain)
-        _ = session.handle(.character("a"))
+        var session = HintSession(targets: Array(tenTargets().prefix(3)), click: .plain, alphabet: "ab")
+        _ = session.handle(.character("b"))
         XCTAssertEqual(session.handle(.character("q")), .cancelled)
         XCTAssertFalse(session.isActive)
         XCTAssertEqual(session.handle(.character("a")), .inactive)
@@ -89,13 +86,13 @@ final class HintSessionTests: XCTestCase {
     }
 
     func testBackspaceRestoresHiddenMarkers() {
-        var session = HintSession(targets: tenTargets(), click: .plain)
-        _ = session.handle(.character("a"))
+        var session = HintSession(targets: Array(tenTargets().prefix(3)), click: .plain, alphabet: "ab")
+        _ = session.handle(.character("b"))
         guard case .showing(let restored) = session.handle(.backspace) else {
             return XCTFail("backspace should reopen the filtered labels")
         }
-        XCTAssertEqual(restored.count, 10)
-        XCTAssertEqual(restored.map(\.text), HintLabeler(elementCount: 10).labels.map(\.displayText))
+        XCTAssertEqual(restored.count, 3)
+        XCTAssertEqual(restored.map(\.text), HintLabeler(elementCount: 3, alphabet: "ab").labels.map(\.displayText))
         XCTAssertTrue(session.isActive)
     }
 
@@ -104,7 +101,7 @@ final class HintSessionTests: XCTestCase {
         guard case .showing(let markers) = session.handle(.backspace) else {
             return XCTFail("backspace with nothing typed should keep the label")
         }
-        XCTAssertEqual(markers, [HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6)])
+        XCTAssertEqual(markers, [HintMarker(index: 0, text: "F", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6)])
     }
 
     func testNoTargetsStartInactive() {
@@ -125,7 +122,7 @@ final class HintSessionTests: XCTestCase {
         ]
         let session = HintSession(targets: targets, click: .plain)
         XCTAssertEqual(session.markers, [
-            HintMarker(index: 0, text: "A", anchor: HintPoint(x: 4, y: 6), elementWidth: 10, elementHeight: 8),
+            HintMarker(index: 0, text: "F", anchor: HintPoint(x: 4, y: 6), elementWidth: 10, elementHeight: 8),
         ])
         XCTAssertFalse(HintRect(x: 1, y: 1, width: -5, height: 5).isUsable)
         XCTAssertTrue(HintRect(x: 4, y: 6, width: 10, height: 8).isUsable)
@@ -149,7 +146,7 @@ final class HintSessionTests: XCTestCase {
             click: .plain
         )
         XCTAssertEqual(
-            session.handle(.character("a")),
+            session.handle(.character("f")),
             .activated(HintActivation(index: 0, click: .plain, point: HintPoint(x: 14, y: 23), identifier: "2/0"))
         )
     }

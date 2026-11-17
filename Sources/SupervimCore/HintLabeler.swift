@@ -51,21 +51,36 @@ public enum HintLabelResult: Equatable, Sendable {
 
 /// Vimium alphabet hints for one hint session.
 ///
-/// Labels come from the home-row alphabet `asdfghjkl`. They are as short as
-/// possible and prefix-free: no label is a prefix of another. Assignment follows
-/// Vimium's `AlphabetHints.hintStrings`: breadth-first expansion, then sort, then
-/// reverse each string so the same first character is spread across the list.
+/// The default alphabet is home row, then the upper row, then the lower row,
+/// strongest fingers first: `fjdkslaghrueiwotypqvbncmxz`. Spec v0.1 named only
+/// `asdfghjkl`. The longer order is the deviation that lets a normal window
+/// keep a single letter on the likely targets. Pass another alphabet to
+/// `init(elementCount:alphabet:)`.
+///
+/// Labels are prefix-free. Single letters are used for as many targets as
+/// possible without making any other label longer than necessary, and the
+/// easiest letters come first so the caller can give them to the most likely
+/// targets. A letter is split into a two-letter prefix only after the target
+/// count exceeds the alphabet, and only as many two-letter labels are emitted
+/// as the remainder needs.
 ///
 /// `f` and `F` use the same labels. The click kind stays in `HintClick`.
 /// This value does not scan accessibility elements or draw the overlay.
 public struct HintLabeler: Equatable, Sendable {
-    public static let alphabet = "asdfghjkl"
+    /// Home row `fjdkslagh`, upper row `rueiwotypq`, lower row `vbncmxz`.
+    public static let alphabet = "fjdkslaghrueiwotypqvbncmxz"
 
     public let labels: [HintLabel]
     public private(set) var typed: String
 
     public init(elementCount: Int) {
-        self.init(labels: Self.generated(elementCount: elementCount))
+        self.init(elementCount: elementCount, alphabet: Self.alphabet)
+    }
+
+    /// `alphabet` is ease order, easiest first. Duplicates and case are folded.
+    /// A count below 1 yields no labels.
+    public init(elementCount: Int, alphabet: String) {
+        self.init(labels: Self.generated(elementCount: elementCount, alphabet: alphabet))
     }
 
     /// Copies `labels` into lowercase storage, in the order given.
@@ -119,25 +134,114 @@ public struct HintLabeler: Equatable, Sendable {
         return .pending(query)
     }
 
-    /// Vimium `AlphabetHints.hintStrings`, fixed to `asdfghjkl`.
-    /// A count below 1 yields no labels. The loop condition matches Vimium,
-    /// including the extra pass that expands the empty seed.
-    private static func generated(elementCount: Int) -> [HintLabel] {
-        guard elementCount > 0 else {
-            return []
+    /// Prefix-free labels, easiest first.
+    ///
+    /// The longest label is only as long as a prefix-free set of `elementCount`
+    /// requires. Within that limit the single-letter labels are maximized, and
+    /// they are the first characters of `alphabet`. The leftover targets use the
+    /// remaining characters as prefixes. One character cannot be both a finished
+    /// label and a prefix, so a set one larger than the alphabet keeps every
+    /// letter but the last as a single label and needs two labels that start
+    /// with that last letter.
+    private static func generated(elementCount: Int, alphabet rawAlphabet: String) -> [HintLabel] {
+        let alphabet = characters(in: rawAlphabet)
+        let texts = strings(count: elementCount, alphabet: alphabet)
+        return texts.enumerated().map { index, text in
+            HintLabel(index: index, text: text)
         }
-        var hints = [""]
-        var offset = 0
-        while hints.count - offset < elementCount || hints.count == 1 {
-            let hint = hints[offset]
-            offset += 1
-            for character in alphabet {
-                hints.append(String(character) + hint)
+    }
+
+    private static func characters(in alphabet: String) -> [Character] {
+        var seen = Set<Character>()
+        var result: [Character] = []
+        for character in alphabet.lowercased() {
+            if seen.insert(character).inserted {
+                result.append(character)
             }
         }
-        let chosen = hints[offset..<(offset + elementCount)].sorted()
-        return chosen.enumerated().map { index, hint in
-            HintLabel(index: index, text: String(hint.reversed()))
+        return result
+    }
+
+    private static func strings(count: Int, alphabet: [Character]) -> [String] {
+        guard count > 0, !alphabet.isEmpty else {
+            return []
         }
+        if alphabet.count == 1 {
+            return [String(alphabet[0])]
+        }
+        return cover(count: count, alphabet: alphabet)
+    }
+
+    private static func cover(count: Int, alphabet: [Character]) -> [String] {
+        let width = alphabet.count
+        if count <= width {
+            return (0..<max(count, 0)).map { String(alphabet[$0]) }
+        }
+        let maxLength = minimumMaxLength(count: count, width: width)
+        let singles = maximumSingles(count: count, width: width, maxLength: maxLength)
+        var labels = (0..<singles).map { String(alphabet[$0]) }
+        let prefixes = Array(alphabet.dropFirst(singles))
+        let rest = count - singles
+        guard !prefixes.isEmpty, rest > 0 else {
+            return labels
+        }
+        let base = rest / prefixes.count
+        let extra = rest % prefixes.count
+        for (index, prefix) in prefixes.enumerated() {
+            let childCount = base + (index < extra ? 1 : 0)
+            guard childCount > 0 else {
+                continue
+            }
+            for child in cover(count: childCount, alphabet: alphabet) {
+                labels.append(String(prefix) + child)
+            }
+        }
+        return labels
+    }
+
+    /// Smallest L such that `width^L` can name `count` targets.
+    private static func minimumMaxLength(count: Int, width: Int) -> Int {
+        var length = 1
+        var capacity = width
+        while capacity < count && length < 8 {
+            length += 1
+            let next = capacity * width
+            if next <= capacity {
+                break
+            }
+            capacity = next
+        }
+        return length
+    }
+
+    /// Most single-letter labels that still leave a prefix-free cover of `count`
+    /// whose longest label is `maxLength`.
+    private static func maximumSingles(count: Int, width: Int, maxLength: Int) -> Int {
+        if count <= width {
+            return count
+        }
+        let childCapacity = widthPower(width, max(maxLength - 1, 0))
+        for singles in stride(from: width, through: 0, by: -1) {
+            let prefixes = width - singles
+            if singles + prefixes * childCapacity >= count {
+                return singles
+            }
+        }
+        return 0
+    }
+
+    private static func widthPower(_ width: Int, _ exponent: Int) -> Int {
+        guard exponent > 0 else {
+            return 1
+        }
+        var value = 1
+        for _ in 0..<exponent {
+            let next = value * width
+            if next <= value {
+                return value
+            }
+            value = next
+        }
+        return value
     }
 }

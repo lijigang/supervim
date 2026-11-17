@@ -16,7 +16,12 @@ public enum MenuHookAssembly {
         let reader = AXSystemReader()
         let signals = AXFocusSignal()
         let fanout = FanoutSignals(inner: signals)
-        let pipeline = FocusPipeline(decider: decider, reader: reader, signals: fanout)
+        let pipeline = FocusPipeline(
+            decider: decider,
+            reader: reader,
+            signals: fanout,
+            waiter: AccessibilityTreeSleeper()
+        )
         let poster = CGEventActuatorPoster()
         let actuator = ActionActuator(poster: poster)
         let focuser = AXInputFocuser()

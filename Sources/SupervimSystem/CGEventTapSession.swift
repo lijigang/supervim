@@ -1,6 +1,7 @@
 #if os(macOS)
 import CoreGraphics
 import Foundation
+import SupervimCore
 
 public enum EventTapError: Error, Equatable, Sendable {
     case creationFailed
@@ -102,9 +103,11 @@ private final class EventTapBox: @unchecked Sendable {
             lock.lock()
             let current = port
             lock.unlock()
+            let reason = type == .tapDisabledByUserInput ? "userInput" : "timeout"
             if let current {
                 CGEvent.tapEnable(tap: current, enable: true)
             }
+            ModeTrace.noteLine(ModeTrace.formatTapDisabled(reason: reason, reenabled: current != nil))
             return Unmanaged.passUnretained(event)
         }
         let outcome = wiring.handleSystemRecord(SystemKeyRecord(event: event, type: type))
