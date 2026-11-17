@@ -102,6 +102,16 @@ public final class MenuBarController<Clock: KeyTimeSource>: @unchecked Sendable 
         self.lastSaved = loaded
     }
 
+    /// The hook and the menu use this same interpreter.
+    public var keyDecider: EventInterpreter<Clock> {
+        interpreter
+    }
+
+    /// Saves a pause or resume that the hook applied to `keyDecider`.
+    public func noteExternalDecision() throws {
+        try persistIfChanged()
+    }
+
     public func snapshot() -> MenuBarSnapshot {
         let title = Self.statusTitle(for: interpreter.mode)
         let paused = interpreter.mode == .paused

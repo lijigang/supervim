@@ -31,6 +31,10 @@ public struct AccessibilityElement: Equatable, Sendable {
     public var frame: ElementFrame?
     public var children: [AccessibilityElement]
     public var childrenTruncated: Bool
+    /// Vertical bar copied off the key hook. Nil when the reader found none.
+    public var verticalScroll: ScrollBarReading?
+    /// Horizontal bar copied off the key hook. Nil when the reader found none.
+    public var horizontalScroll: ScrollBarReading?
 
     public init(
         role: String? = nil,
@@ -39,7 +43,9 @@ public struct AccessibilityElement: Equatable, Sendable {
         editableAttribute: Bool? = nil,
         frame: ElementFrame? = nil,
         children: [AccessibilityElement] = [],
-        childrenTruncated: Bool = false
+        childrenTruncated: Bool = false,
+        verticalScroll: ScrollBarReading? = nil,
+        horizontalScroll: ScrollBarReading? = nil
     ) {
         self.role = role
         self.subrole = subrole
@@ -48,6 +54,8 @@ public struct AccessibilityElement: Equatable, Sendable {
         self.frame = frame
         self.children = children
         self.childrenTruncated = childrenTruncated
+        self.verticalScroll = verticalScroll
+        self.horizontalScroll = horizontalScroll
     }
 }
 

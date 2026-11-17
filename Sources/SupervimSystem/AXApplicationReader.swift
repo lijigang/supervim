@@ -75,7 +75,9 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
             subrole: copyString(element, kAXSubroleAttribute),
             actions: copyActions(element),
             editableAttribute: copyBool(element, "AXEditable" as CFString),
-            frame: copyFrame(element)
+            frame: copyFrame(element),
+            verticalScroll: copyScrollBar(element, kAXVerticalScrollBarAttribute),
+            horizontalScroll: copyScrollBar(element, kAXHorizontalScrollBarAttribute)
         )
     }
 
@@ -299,6 +301,29 @@ private func copyString(_ element: AXUIElement, _ attribute: String) -> String? 
         return nil
     }
     return value as? String
+}
+
+private func copyScrollBar(_ element: AXUIElement, _ attribute: String) -> ScrollBarReading? {
+    guard let bar = copyElement(element, attribute) else {
+        return nil
+    }
+    guard let value = copyDouble(bar, kAXValueAttribute as CFString),
+          let minimum = copyDouble(bar, kAXMinValueAttribute as CFString),
+          let maximum = copyDouble(bar, kAXMaxValueAttribute as CFString)
+    else {
+        return nil
+    }
+    return ScrollBarReading(value: value, minimum: minimum, maximum: maximum, contentLength: nil)
+}
+
+private func copyDouble(_ element: AXUIElement, _ attribute: CFString) -> Double? {
+    guard let value = copyAttribute(element, attribute) else {
+        return nil
+    }
+    guard let number = value as? NSNumber else {
+        return nil
+    }
+    return number.doubleValue
 }
 
 private func copyBool(_ element: AXUIElement, _ attribute: CFString) -> Bool? {
