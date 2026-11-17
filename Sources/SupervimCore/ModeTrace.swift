@@ -54,6 +54,59 @@ public enum ModeTrace {
         return value
     }
 
+    public static func noteHintScan(
+        bundleIdentifier: String,
+        visited: Int,
+        hits: Int,
+        milliseconds: Int,
+        expansion: String
+    ) {
+        guard enabled() else {
+            return
+        }
+        append(formatHintScan(
+            bundleIdentifier: bundleIdentifier,
+            visited: visited,
+            hits: hits,
+            milliseconds: milliseconds,
+            expansion: expansion
+        ))
+    }
+
+    public static func formatHintScan(
+        bundleIdentifier: String,
+        visited: Int,
+        hits: Int,
+        milliseconds: Int,
+        expansion: String
+    ) -> String {
+        let bundle = bundleIdentifier.isEmpty ? "-" : bundleIdentifier
+        return "hint-scan bundle=\(bundle) visited=\(visited) hits=\(hits) ms=\(milliseconds) expansion=\(expansion)"
+    }
+
+    public static func formatHintPlace(screen: DisplayFrame, index: Int) -> String {
+        "hint-screen index=\(index) x=\(screen.x) y=\(screen.y) w=\(screen.width) h=\(screen.height) scale=\(screen.backingScale)"
+    }
+
+    public static func formatHintLabel(
+        index: Int,
+        ax: HintRect,
+        ns: HintRect
+    ) -> String {
+        "hint-label index=\(index) ax=\(ax.x),\(ax.y),\(ax.width),\(ax.height) ns=\(ns.x),\(ns.y),\(ns.width),\(ns.height)"
+    }
+
+    public static func formatHintClick(index: Int, method: String, x: Double, y: Double) -> String {
+        "hint-click index=\(index) method=\(method) ax=\(x),\(y)"
+    }
+
+    public static func noteLine(_ line: String) {
+        guard enabled() else {
+            return
+        }
+        append(line)
+    }
+
     public static func logFileURL() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/Supervim.log", isDirectory: false)

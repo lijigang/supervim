@@ -559,7 +559,45 @@ final class AXScannerTests: XCTestCase {
         XCTAssertEqual(snapshot.elements[roles.count + 4].actions, ["AXPick"])
     }
 
-    func testContainersAreNotClickableEvenWithAPressAction() {
+    func testGroupWithPressActionIsClickable() {
+        let fixture = makeFocusFixture()
+        fixture.reader.window = .value(
+            windowElement(children: [
+                AccessibilityElement(
+                    role: "AXGroup",
+                    actions: ["AXPress"],
+                    frame: ElementFrame(x: 12, y: 40, width: 180, height: 28)
+                ),
+                AccessibilityElement(
+                    role: "AXGroup",
+                    frame: ElementFrame(x: 12, y: 80, width: 180, height: 28)
+                ),
+            ])
+        )
+        guard case .elements(let snapshot) = fixture.pipeline.scanner.clickableElements() else {
+            return XCTFail("expected elements")
+        }
+        XCTAssertEqual(snapshot.elements.map(\.role), ["AXGroup"])
+        XCTAssertEqual(snapshot.elements.map(\.actions), [["AXPress"]])
+        XCTAssertEqual(snapshot.elements.map(\.path), [[0]])
+    }
+
+    func testCollapsedWindowIsRereadAfterAccessibilityIsEnabled() {
+        let reader = ExpandingAccessibilityReader()
+        let signals = ScriptedFocusSignals()
+        let interpreter = EventInterpreter(clock: ManualKeyClock())
+        let pipeline = FocusPipeline(decider: interpreter, reader: reader, signals: signals)
+        reader.bundle = "com.tencent.xinWeChat"
+
+        guard case .elements(let snapshot) = pipeline.scanner.clickableElements() else {
+            return XCTFail("expected elements")
+        }
+        XCTAssertEqual(reader.expansions, [.manual])
+        XCTAssertEqual(snapshot.elements.map(\.role), ["AXButton"])
+        XCTAssertEqual(reader.windowReads, 2)
+    }
+
+    func testPressActionMakesContainerRolesClickable() {
         let fixture = makeFocusFixture()
         let roles = [
             "AXWindow", "AXApplication", "AXScrollArea", "AXWebArea", "AXGroup",
@@ -578,10 +616,10 @@ final class AXScannerTests: XCTestCase {
             windowElement(children: children, actions: ["AXPress"])
         )
 
-        XCTAssertEqual(
-            fixture.pipeline.scanner.clickableElements(),
-            .elements(ClickableSnapshot(elements: [], truncated: false))
-        )
+        guard case .elements(let snapshot) = fixture.pipeline.scanner.clickableElements() else {
+            return XCTFail("expected elements")
+        }
+        XCTAssertEqual(snapshot.elements.compactMap(\.role), roles)
     }
 
     func testFramesOutsideTheWindowOrWithoutAreaAreDropped() {
@@ -1096,6 +1134,49 @@ private func windowElement(
         children: children,
         childrenTruncated: childrenTruncated
     )
+}
+
+private final class ExpandingAccessibilityReader: AccessibilityReading, @unchecked Sendable {
+    var bundle = ""
+    private(set) var expansions: [AccessibilityTreeExpansion] = []
+    private(set) var windowReads = 0
+    private var opened = false
+
+    func readFocusedElement() -> AccessibilityRead<AccessibilityElement> {
+        .unavailable
+    }
+
+    func readFrontmostBundleIdentifier() -> AccessibilityRead<String> {
+        .value(bundle)
+    }
+
+    func readFrontmostWindow(maxNodes: Int, maxDepth: Int) -> AccessibilityRead<AccessibilityElement> {
+        _ = maxNodes
+        _ = maxDepth
+        windowReads += 1
+        if !opened {
+            return .value(AccessibilityElement(role: "AXWindow", frame: ElementFrame(x: 0, y: 0, width: 800, height: 600)))
+        }
+        return .value(
+            AccessibilityElement(
+                role: "AXWindow",
+                frame: ElementFrame(x: 0, y: 0, width: 800, height: 600),
+                children: [
+                    AccessibilityElement(
+                        role: "AXButton",
+                        frame: ElementFrame(x: 20, y: 40, width: 120, height: 28)
+                    ),
+                ]
+            )
+        )
+    }
+
+    func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion {
+        XCTAssertTrue(allowEnhanced)
+        opened = true
+        expansions.append(.manual)
+        return .manual
+    }
 }
 
 private final class ScriptedAccessibilityReader: AccessibilityReading, @unchecked Sendable {

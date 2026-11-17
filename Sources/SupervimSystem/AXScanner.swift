@@ -114,8 +114,17 @@ public enum FocusClassification {
         in window: AccessibilityElement,
         limits: TreeWalkLimits
     ) -> ClickableSnapshot {
+        countedClickables(in: window, limits: limits).snapshot
+    }
+
+    static func countedClickables(
+        in window: AccessibilityElement,
+        limits: TreeWalkLimits
+    ) -> (snapshot: ClickableSnapshot, visited: Int) {
         var elements: [ClickableElement] = []
+        var visited = 0
         let truncated = walk(window, limits: limits) { visit in
+            visited += 1
             if !visit.isRoot, isClickable(visit.node), isOnScreen(visit.node, windowFrame: window.frame) {
                 elements.append(
                     ClickableElement(
@@ -129,7 +138,7 @@ public enum FocusClassification {
             }
             return false
         }
-        return ClickableSnapshot(elements: elements, truncated: truncated)
+        return (ClickableSnapshot(elements: elements, truncated: truncated), visited)
     }
 
     public static func firstEditableInput(
@@ -285,6 +294,9 @@ public enum FocusClassification {
     }
 
     private static func isClickable(_ element: AccessibilityElement) -> Bool {
+        if element.actions.contains(where: { pressActions.contains($0) }) {
+            return true
+        }
         if let subrole = element.subrole, clickableSubroles.contains(subrole) {
             return true
         }
@@ -294,7 +306,7 @@ public enum FocusClassification {
         if let role = element.role, clickableRoles.contains(role) {
             return true
         }
-        return element.actions.contains { pressActions.contains($0) }
+        return false
     }
 
     private static func isOnScreen(_ element: AccessibilityElement, windowFrame: ElementFrame?) -> Bool {
@@ -378,10 +390,27 @@ public enum EditableInputQuery: Equatable, Sendable {
 
 /// Reads already-copied accessibility values. Tests supply a fake.
 /// `readFocusedElement` must not walk children. The window read is off the key hook.
+/// What a one-time accessibility-tree request did for one process.
+public enum AccessibilityTreeExpansion: Equatable, Sendable {
+    case unchanged
+    case manual
+    case enhanced
+}
+
 public protocol AccessibilityReading: AnyObject, Sendable {
     func readFocusedElement() -> AccessibilityRead<AccessibilityElement>
     func readFrontmostBundleIdentifier() -> AccessibilityRead<String>
     func readFrontmostWindow(maxNodes: Int, maxDepth: Int) -> AccessibilityRead<AccessibilityElement>
+    /// Ask the frontmost app to expose its tree. Once per process.
+    /// Enhanced mode is only requested when `allowEnhanced` is true.
+    func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion
+}
+
+extension AccessibilityReading {
+    public func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion {
+        _ = allowEnhanced
+        return .unchanged
+    }
 }
 
 /// Fires when focus or the frontmost app may have changed.
@@ -484,11 +513,58 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
     }
 
     public func clickableElements() -> ClickableQuery {
-        switch reader.readFrontmostWindow(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth) {
+        let started = Date()
+        let bundle = frontmostBundle()
+        var expansion = AccessibilityTreeExpansion.unchanged
+        var read = reader.readFrontmostWindow(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth)
+        var counted = count(read)
+        if counted.hits == 0 {
+            expansion = reader.expandAccessibilityTree(allowEnhanced: true)
+            if expansion != .unchanged {
+                read = reader.readFrontmostWindow(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth)
+                counted = count(read)
+            }
+        }
+        let milliseconds = Int((Date().timeIntervalSince(started) * 1000).rounded())
+        ModeTrace.noteHintScan(
+            bundleIdentifier: bundle,
+            visited: counted.visited,
+            hits: counted.hits,
+            milliseconds: milliseconds,
+            expansion: expansionName(expansion)
+        )
+        return counted.query
+    }
+
+    private func expansionName(_ expansion: AccessibilityTreeExpansion) -> String {
+        switch expansion {
+        case .unchanged:
+            return "none"
+        case .manual:
+            return "manual"
+        case .enhanced:
+            return "enhanced"
+        }
+    }
+
+    private func frontmostBundle() -> String {
+        switch reader.readFrontmostBundleIdentifier() {
+        case .value(let identifier):
+            return identifier
         case .unavailable:
-            return .unavailable
+            return ""
+        }
+    }
+
+    private func count(
+        _ read: AccessibilityRead<AccessibilityElement>
+    ) -> (query: ClickableQuery, visited: Int, hits: Int) {
+        switch read {
+        case .unavailable:
+            return (.unavailable, 0, 0)
         case .value(let window):
-            return .elements(FocusClassification.clickableElements(in: window, limits: limits))
+            let counted = FocusClassification.countedClickables(in: window, limits: limits)
+            return (.elements(counted.snapshot), counted.visited, counted.snapshot.elements.count)
         }
     }
 

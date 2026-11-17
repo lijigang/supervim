@@ -10,7 +10,8 @@ import SupervimCore
 /// Focus scrolls and edge scrolls set the scroll bar's `AXValue`.
 /// A missing element or a missing attribute does nothing. It does not substitute a wheel event.
 public protocol AccessibilityManipulating: AnyObject, Sendable {
-    func press(elementID: String)
+    /// `false` means the element is missing or `AXPress` returned an error.
+    func press(elementID: String) -> Bool
     func nudgeScrollBar(elementID: String, direction: ScrollDirection, pixels: Int, scrollRange: Double)
     func scrollBarToEdge(elementID: String, direction: ScrollDirection)
 }
@@ -29,11 +30,14 @@ public final class AXElementStore: AccessibilityManipulating, @unchecked Sendabl
         lock.unlock()
     }
 
-    public func press(elementID: String) {
+    public func press(elementID: String) -> Bool {
         guard let element = element(for: elementID) else {
-            return
+            return false
         }
-        _ = AXUIElementPerformAction(element, kAXPressAction as CFString)
+        guard CFGetTypeID(element) == AXUIElementGetTypeID() else {
+            return false
+        }
+        return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
     }
 
     public func nudgeScrollBar(
@@ -141,8 +145,10 @@ public final class CGEventActuatorPoster: ActuatorPosting, @unchecked Sendable {
 
     public func post(_ effect: ActuatorEffect) {
         switch effect {
-        case .accessibilityPress(let elementID):
-            accessibility.press(elementID: elementID)
+        case .accessibilityPress(let elementID, let fallback):
+            if !accessibility.press(elementID: elementID) {
+                postLeftClick(at: fallback, modifiers: [])
+            }
         case .mouseClick(let point, _, let modifiers):
             postLeftClick(at: point, modifiers: modifiers)
         case .pointerScroll(_, _, _, let location, let horizontal, let vertical):

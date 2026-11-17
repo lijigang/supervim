@@ -110,6 +110,7 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     private let actuator: ActionActuator
     private let mode: any HintModeEnding
     private let cache: LockedClickableCache
+    private let misses: HintMissBanner?
     private let lock = NSLock()
     private var session: HintSession?
 
@@ -118,13 +119,15 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
         presenter: any OverlayPresenting,
         actuator: ActionActuator,
         mode: any HintModeEnding,
-        cache: LockedClickableCache = LockedClickableCache()
+        cache: LockedClickableCache = LockedClickableCache(),
+        misses: HintMissBanner? = nil
     ) {
         self.querier = querier
         self.presenter = presenter
         self.actuator = actuator
         self.mode = mode
         self.cache = cache
+        self.misses = misses
     }
 
     @discardableResult
@@ -232,6 +235,9 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     }
 
     private func stop(_ reason: HintCancelReason) -> HintOverlayResult {
+        if reason == .noTargets || reason == .unavailable {
+            misses?.reportMissingClickableElements()
+        }
         session = nil
         presenter.hideOverlay()
         _ = mode.endHint(.cancelled)
@@ -239,11 +245,19 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     }
 
     private static func request(for activation: HintActivation) -> ClickRequest {
-        ClickRequest(
-            point: ActuatorPoint(x: activation.point.x, y: activation.point.y),
+        let point = ActuatorPoint(x: activation.point.x, y: activation.point.y)
+        let press = activation.click == .plain && activation.canAccessibilityPress
+        ModeTrace.noteLine(ModeTrace.formatHintClick(
+            index: activation.index,
+            method: press ? "AXPress" : "coordinate",
+            x: point.x,
+            y: point.y
+        ))
+        return ClickRequest(
+            point: point,
             kind: activation.click == .command ? .command : .plain,
             elementID: activation.identifier,
-            canAccessibilityPress: false
+            canAccessibilityPress: press
         )
     }
 
@@ -259,6 +273,7 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
         }
         let joined = element.path.map(String.init).joined(separator: "/")
         let identifier = joined.isEmpty ? nil : joined
-        return HintTarget(frame: frame, identifier: identifier)
+        let canPress = element.actions.contains("AXPress")
+        return HintTarget(frame: frame, identifier: identifier, canAccessibilityPress: canPress)
     }
 }

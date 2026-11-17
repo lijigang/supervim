@@ -143,6 +143,7 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     private var permissionWindowOpen = false
     private var latestGuidance: PermissionGuidance?
     private let session: MenuBarController<SystemKeyClock>
+    private let misses: HintMissBanner
     private let hookObserver: HookMenuObserver
     private let runtime: SupervimRuntime
     private let launchGate: PermissionLaunchGate
@@ -151,9 +152,11 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     override init() {
         let session = MenuBarApplication.makeSession(frontmost: WorkspaceFrontmost())
         let observer = HookMenuObserver()
+        let misses = HintMissBanner()
         self.session = session
+        self.misses = misses
         self.hookObserver = observer
-        self.runtime = MenuHookAssembly.make(decider: session.keyDecider, observer: observer)
+        self.runtime = MenuHookAssembly.make(decider: session.keyDecider, observer: observer, misses: misses)
         self.launchGate = PermissionLaunchGate(
             guide: PermissionGuide(
                 status: SystemPermissionStatus(),
@@ -226,7 +229,13 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     private func installMenu(guidance: PermissionGuidance) {
         let menu = NSMenu()
         let snapshot = session.snapshot()
-        statusItem?.button?.title = snapshot.statusTitle
+        let title = misses.title(fallback: snapshot.statusTitle)
+        statusItem?.button?.title = title
+        if title != snapshot.statusTitle {
+            DispatchQueue.main.asyncAfter(deadline: .now() + misses.duration + 0.05) { [weak self] in
+                self?.installMenu()
+            }
+        }
         for command in snapshot.commands {
             if command.kind == .separator {
                 if guidance.isVisible {

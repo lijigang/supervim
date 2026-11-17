@@ -22,8 +22,24 @@ import AppKit
 /// window read, which callers use off the key hook.
 public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
     private let identities = FocusIdentityVault()
+    private let expansions = AccessibilityExpander()
 
     public init() {}
+
+    public func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion {
+        guard AXIsProcessTrusted() else {
+            return .unchanged
+        }
+        let system = AXUIElementCreateSystemWide()
+        guard let application = copyElement(system, kAXFocusedApplicationAttribute) else {
+            return .unchanged
+        }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(application, &pid) == .success, pid != 0 else {
+            return .unchanged
+        }
+        return expansions.expand(application, pid: pid, allowEnhanced: allowEnhanced)
+    }
 
     public func readFocusedElement() -> AccessibilityRead<AccessibilityElement> {
         guard AXIsProcessTrusted() else {
@@ -266,6 +282,52 @@ public final class AXFocusSignal: FocusChangeSignaling, @unchecked Sendable {
         #else
         return 0
         #endif
+    }
+}
+
+/// Turns on the accessibility tree for one process, at most once.
+/// Manual accessibility is tried first. Enhanced mode is the fallback, and
+/// only when the caller says the scan was empty. Enhanced mode can slow
+/// window animation, so a process whose manual request succeeded is left alone.
+private final class AccessibilityExpander: @unchecked Sendable {
+    private let lock = NSLock()
+    private var manual = Set<pid_t>()
+    private var enhanced = Set<pid_t>()
+    private var manualSucceeded = Set<pid_t>()
+
+    func expand(_ application: AXUIElement, pid: pid_t, allowEnhanced: Bool) -> AccessibilityTreeExpansion {
+        lock.lock()
+        let needsManual = manual.insert(pid).inserted
+        let manualAlreadyWorked = manualSucceeded.contains(pid)
+        lock.unlock()
+        if needsManual {
+            if setBool(application, "AXManualAccessibility", true) {
+                lock.lock()
+                manualSucceeded.insert(pid)
+                lock.unlock()
+                return .manual
+            }
+        } else if manualAlreadyWorked {
+            return .unchanged
+        }
+        guard allowEnhanced else {
+            return .unchanged
+        }
+        lock.lock()
+        let needsEnhanced = enhanced.insert(pid).inserted
+        lock.unlock()
+        guard needsEnhanced else {
+            return .unchanged
+        }
+        if setBool(application, "AXEnhancedUserInterface", true) {
+            return .enhanced
+        }
+        return .unchanged
+    }
+
+    private func setBool(_ element: AXUIElement, _ name: String, _ value: Bool) -> Bool {
+        let error = AXUIElementSetAttributeValue(element, name as CFString, NSNumber(value: value))
+        return error == .success
     }
 }
 
