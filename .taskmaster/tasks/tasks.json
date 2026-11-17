@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T05:57:20.000Z",
-      "description": "Supervim 已批准任务。任务 1 和任务 2 已合并，状态为 done。任务 3 在评审前保持 in-progress。任务 4、任务 5 和任务 6 为 done。任务 7 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T06:24:43.000Z",
+      "description": "Supervim 已批准任务。任务 1 到任务 6 已合并，状态为 done。任务 7 为 done。任务 8 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -32,7 +32,7 @@
         "id": 3,
         "title": "KeyParser 按键序列解析",
         "description": "解析带前缀和超时的按键序列，区分命令前缀与应放过的按键。",
-        "status": "in-progress",
+        "status": "done",
         "dependencies": [1],
         "priority": "medium",
         "details": "纯逻辑解析器放在 SupervimCore。支持 gg 这类多键序列和超时。Normal 下无法识别的键必须放过，不能吞掉。Ctrl+] 放过下一键的具体动作属于任务 11，本任务只提供解析所需的序列结果。不读取 CGEvent。",
@@ -76,7 +76,7 @@
         "id": 7,
         "title": "EventTap 与模式、解析、命令接线",
         "description": "用 CGEventTap 拦截按键，并接到模式机、解析器和命令表。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [2, 3, 5],
         "priority": "medium",
         "details": "事件回调里只使用模式和已缓存的焦点，调用解析器与命令表，然后决定动作或更新浮层。禁止在事件钩子里同步扫描辅助功能树。未知焦点或未知 Normal 键必须把事件放回系统。排除列表中的前台应用不拦截。系统接口放在 SupervimSystem 的协议后面，测试注入替身。本任务不实现点击、滚动或浮层绘制。",

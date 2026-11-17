@@ -367,6 +367,19 @@ final class KeyParserTests: XCTestCase {
         assertHandle(&parser, KeyEvent("/"), [.command(.find)])
         assertHandle(&parser, KeyEvent("?"), [.command(.help)])
     }
+
+    func testSuspendParsingDropsPrefixAndPassNextWithoutReplaying() {
+        var parser = makeParser().parser
+        assertHandle(&parser, KeyEvent("g"), [.waitingForPrefix])
+        XCTAssertEqual(parser.suspendParsing(), .prefixCancelled)
+        XCTAssertNil(parser.suspendParsing())
+        assertHandle(&parser, KeyEvent("g"), [.waitingForPrefix])
+        XCTAssertEqual(parser.suspendParsing(), .prefixCancelled)
+
+        assertHandle(&parser, KeyEvent("]", modifiers: .control), [.command(.passNextKey)])
+        XCTAssertNil(parser.suspendParsing())
+        assertHandle(&parser, KeyEvent("j"), [.command(.scrollDown)])
+    }
 }
 
 private struct ParserFixture {

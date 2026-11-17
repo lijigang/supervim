@@ -164,6 +164,16 @@ public struct KeyParser<Clock: KeyTimeSource>: Sendable {
         return .prefixCancelled
     }
 
+    /// Drops a held prefix and a pass-next arm without replaying either.
+    /// The event tap calls this when it stops feeding keys to the parser.
+    /// Returns `.prefixCancelled` when a prefix was waiting.
+    public mutating func suspendParsing() -> KeyParseResult? {
+        let cancelled: KeyParseResult? = pending == nil ? nil : .prefixCancelled
+        pending = nil
+        passNextArmed = false
+        return cancelled
+    }
+
     private func isExpired(_ pending: PendingPrefix) -> Bool {
         clock.nowMilliseconds() - pending.startedAt >= prefixTimeoutMilliseconds
     }
