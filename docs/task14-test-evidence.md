@@ -136,3 +136,45 @@ PermissionGuide.swift function coverage: 100.00% (12/12)
 - `PermissionAccess.swift` 里把 C 枚举翻译成 Bool 的那几行没有执行。Swift 侧 `ListenEventAccess.resolve` 的合并规则有测试
 - `NSWorkspace` 打开失败，以及空 URL 被拒绝，没有在 macOS 上跑过
 - 没有安装事件钩子，也没有测量 CPU、内存或 `f` 的延迟
+
+## 接到任务 11 的运行时
+
+任务 11 在 `cdfe799` 合入主干。变基保留了任务 11 的 `done`，只把任务 14 改成 `done`。任务 12 和 15 仍是 `pending`。
+
+`SupervimRuntime.start` 在辅助功能或输入监控缺任一时不调用扫描器、不安装钩子、也不崩溃。它自己不显示引导。引导接在它前面：`PermissionLaunchGate` 在引导可见时不要求启动；重新检测发现两项都已授予后，才要求走 runtime 的启动。应用只有在 `shouldStartRuntime` 为真时调用 `runtime.start()`。启动结果里焦点或钩子有一项起来，才记成已经启动，避免重复安装。两项都没起来时，下一次检测还可以再试。缺权限时菜单进程不装钩子。
+
+## 第六次运行：启动门还没接上（RED）
+
+时间：2026-11-17 07:44:46 UTC 到 07:44:52 UTC。命令过滤那 5 条启动门测试。当时 `PermissionLaunchGate` 永远不要求启动。退出码 1。构建日志里没有编译警告。
+
+```text
+Test Suite 'PermissionGuideTests' failed at 2026-11-17 07:44:52.109
+	 Executed 5 tests, with 5 failures (0 unexpected) in 0.002 (0.002) seconds
+```
+
+代表输出：
+
+```text
+testALaterGrantAsksToStartTheRuntimeOnce : XCTAssertTrue failed
+testGrantedAtLaunchAsksToStartWithoutShowingTheGuide : XCTAssertTrue failed
+testOpeningTheLastMissingPaneAsksToStartAfterTheGrant : XCTAssertTrue failed
+```
+
+`testMissingPermissionDoesNotAskToStartTheRuntime` 在这个空实现上通过，因为空实现本来就不要求启动。它单独不能证明「授予之后才会启动」。
+
+## 第七次运行：接到 runtime 之后通过，并量覆盖率
+
+时间：2026-11-17 07:45:31 UTC。上面 5 条和 `testAppPresentsGuidanceWithoutPromptingOrInstallingATap` 通过。应用源码同时含有 `PermissionLaunchGate`、`MenuHookAssembly` 和 `runtime.start()`。`SupervimRuntimeTests` 12 个也通过，包括缺权限不启动、不崩溃。
+
+时间：2026-11-17 07:46:25 UTC 到 07:46:36 UTC。命令：`scripts/permission-guide-coverage.sh`。退出码 0。构建日志里没有编译警告。
+
+系统测试 206 个，核心测试 341 个，合计 547 个 XCTest，0 失败。其中 `PermissionGuideTests` 24 个。Swift Testing 仍是 0。
+
+```text
+binary: .build/out/Products/Debug-linux-x86_64/SupervimCoreTests.so
+PermissionGuide.swift line coverage: 100.00% (119/119)
+PermissionGuide.swift region coverage: 100.00% (46/46)
+PermissionGuide.swift function coverage: 100.00% (20/20)
+```
+
+这仍是 Linux 数字。macOS 上 `PermissionAccess.swift` 能编过，以及同一组测试和覆盖率，看变基之后的 CI。写这一节时那次 CI 还没有结果。授权后不重启是否生效，仍然未验证。
