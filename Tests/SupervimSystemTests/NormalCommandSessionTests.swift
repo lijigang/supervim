@@ -133,6 +133,82 @@ final class NormalCommandSessionTests: XCTestCase {
         }
     }
 
+    func testGGOnAWebPageWheelsThePageCenter() {
+        var page = pageArea()
+        page.role = "AXWebArea"
+        let fixture = makeSession(bundle: "com.apple.Safari", areas: [page])
+        let prefix = fixture.session.handleKeyDown(KeyEvent("g"))
+        XCTAssertEqual(prefix.delivery, .swallow)
+        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        let performance = fixture.session.handleKeyDown(KeyEvent("g"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(performance.mode, .normal)
+        guard case .pointerScroll(let target, _, _, let location, let horizontal, let vertical) =
+            fixture.poster.effects.first
+        else {
+            return XCTFail("expected a wheel at the page center, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(target, "page")
+        XCTAssertEqual(location, ActuatorPoint(x: 100, y: 100))
+        XCTAssertEqual(horizontal, 0)
+        XCTAssertGreaterThan(vertical, 1000)
+    }
+
+    func testShiftGOnAWebPageWheelsTowardTheBottom() {
+        var page = pageArea()
+        page.role = "AXWebArea"
+        let fixture = makeSession(bundle: "com.apple.Safari", areas: [page])
+        let performance = fixture.session.handleSystemRecord(
+            sampleKey(keyCode: 0x05, flags: SystemModifierMask.shift, unicode: "G")
+        )
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(performance.mode, .normal)
+        guard case .pointerScroll(let target, _, _, let location, _, let vertical) = fixture.poster.effects.first else {
+            return XCTFail("expected a wheel at the page center, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(target, "page")
+        XCTAssertEqual(location, ActuatorPoint(x: 100, y: 100))
+        XCTAssertLessThan(vertical, -1000)
+    }
+
+    func testHeldNormalGGWheelsTheHistoryCenter() {
+        let composerFrame = ActuatorRect(x: 0, y: 520, width: 800, height: 80)
+        let chatFrame = ActuatorRect(x: 0, y: 0, width: 800, height: 500)
+        let fixture = composerSession(
+            areas: [
+                sessionArea(
+                    "composer",
+                    frame: composerFrame,
+                    depth: 4,
+                    travelUp: 40,
+                    travelDown: 40,
+                    role: "AXScrollArea",
+                    textInput: true
+                ),
+                sessionArea(
+                    "history",
+                    frame: chatFrame,
+                    depth: 1,
+                    travelUp: 900,
+                    travelDown: 40,
+                    role: "AXScrollArea"
+                ),
+            ],
+            pointer: ActuatorPoint(x: 400, y: 560)
+        )
+        _ = fixture.session.handleKeyDown(KeyEvent(identity: .escape))
+        _ = fixture.session.handleKeyDown(KeyEvent("g"))
+        let performance = fixture.session.handleKeyDown(KeyEvent("g"))
+        XCTAssertEqual(performance.mode, .normal)
+        XCTAssertEqual(performance.delivery, .swallow)
+        guard case .pointerScroll(let target, _, _, let location, _, let vertical) = fixture.poster.effects.first else {
+            return XCTFail("expected a wheel at the history center, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(target, "history")
+        XCTAssertEqual(location, ActuatorPoint(x: 400, y: 250))
+        XCTAssertGreaterThan(vertical, 1000)
+    }
+
     func testGGScrollsToTheTopAfterThePrefix() {
         let fixture = makeSession(bundle: "com.apple.Safari")
         let prefix = fixture.session.handleKeyDown(KeyEvent("g"))
@@ -476,6 +552,7 @@ final class NormalCommandSessionTests: XCTestCase {
         XCTAssertTrue(reader.contains("kAXValueAttribute"))
         XCTAssertTrue(reader.contains("kAXMinValueAttribute"))
         XCTAssertTrue(reader.contains("kAXMaxValueAttribute"))
+        XCTAssertTrue(reader.contains("ScrollTargetIdentity.identifier"))
         XCTAssertTrue(reader.contains("CFGetTypeID"))
         XCTAssertFalse(reader.contains("kAXEditableAttribute"))
         XCTAssertFalse(reader.contains("as? AXUIElement"))
@@ -746,6 +823,8 @@ final class ScrollAreaCatalogTests: XCTestCase {
         XCTAssertTrue(text.contains("A node with no usable scroll bar is not a target"))
         XCTAssertTrue(text.contains("Truncation drops every area"))
         XCTAssertTrue(text.contains("contentLength"))
+        XCTAssertEqual(ScrollTargetIdentity.identifier(path: []), "root")
+        XCTAssertEqual(ScrollTargetIdentity.identifier(path: [0, 2]), "0/2")
         for token in ["import AppKit", "import CoreGraphics", "AXUIElement", "CGEvent", "URLSession", "print("] {
             XCTAssertFalse(text.contains(token), token)
         }

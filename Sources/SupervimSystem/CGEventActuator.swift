@@ -30,6 +30,12 @@ public final class AXElementStore: AccessibilityManipulating, @unchecked Sendabl
         lock.unlock()
     }
 
+    public func reset() {
+        lock.lock()
+        elements.removeAll()
+        lock.unlock()
+    }
+
     public func press(elementID: String) -> Bool {
         guard let element = element(for: elementID) else {
             return false
@@ -133,6 +139,43 @@ public final class AXElementStore: AccessibilityManipulating, @unchecked Sendabl
     }
 }
 
+extension AXElementStore: EdgeScrollBars {
+    public func bar(elementID: String, direction: ScrollDirection) -> EdgeBar? {
+        guard let element = element(for: elementID), let scroll = scrollBar(element, direction: direction) else {
+            return nil
+        }
+        guard let value = copyDouble(scroll, kAXValueAttribute as CFString) else {
+            return nil
+        }
+        let minimum = copyDouble(scroll, kAXMinValueAttribute as CFString) ?? 0
+        let maximum = copyDouble(scroll, kAXMaxValueAttribute as CFString) ?? 1
+        return EdgeBar(
+            value: value,
+            minimum: minimum,
+            maximum: maximum,
+            settable: attributeIsSettable(scroll, kAXValueAttribute as CFString)
+        )
+    }
+
+    public func writeBar(elementID: String, direction: ScrollDirection, value: Double) -> Double? {
+        guard let element = element(for: elementID), let scroll = scrollBar(element, direction: direction) else {
+            return nil
+        }
+        guard AXUIElementSetAttributeValue(scroll, kAXValueAttribute as CFString, NSNumber(value: value)) == .success else {
+            return nil
+        }
+        return copyDouble(scroll, kAXValueAttribute as CFString)
+    }
+
+    private func attributeIsSettable(_ element: AXUIElement, _ attribute: CFString) -> Bool {
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(element, attribute, &settable) == .success else {
+            return false
+        }
+        return settable.boolValue
+    }
+}
+
 /// Posts marked Quartz events. The event tap ignores this source user data,
 /// so a synthesized shortcut is not parsed as another Supervim command.
 /// Unit tests must not construct this type: constructing it can move the pointer.
@@ -153,6 +196,10 @@ public final class CGEventActuatorPoster: ActuatorPosting, @unchecked Sendable {
             postLeftClick(at: point, modifiers: modifiers)
         case .pointerScroll(_, _, _, let location, let horizontal, let vertical):
             postWheel(horizontal: horizontal, vertical: vertical, at: location)
+        case .edgeScroll:
+            break
+        case .scrollBarEdge:
+            break
         case .focusScroll(let targetID, let direction, let amount, let pixels, let scrollRange):
             if case .edge = amount {
                 accessibility.scrollBarToEdge(elementID: targetID, direction: direction)

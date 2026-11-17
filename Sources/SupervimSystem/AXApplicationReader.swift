@@ -23,8 +23,11 @@ import AppKit
 public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
     private let identities = FocusIdentityVault()
     private let expansions = AccessibilityExpander()
+    private let scrollElements: AXElementStore?
 
-    public init() {}
+    public init(scrollElements: AXElementStore? = nil) {
+        self.scrollElements = scrollElements
+    }
 
     public func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion {
         guard AXIsProcessTrusted() else {
@@ -70,36 +73,59 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
     }
 
     public func readFrontmostWindow(maxNodes: Int, maxDepth: Int) -> AccessibilityRead<AccessibilityElement> {
-        let choices = readWindowChoices(maxNodes: maxNodes, maxDepth: maxDepth)
+        let choices = liveChoices(maxNodes: maxNodes, maxDepth: maxDepth)
+        let limits = TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth)
         if let choice = choices.first(where: { $0.found && ($0.element?.children.isEmpty == false) }),
            let element = choice.element {
+            rememberScrollElements(choice.live, limits: limits)
             return .value(element)
         }
-        if let application = readApplicationElement(maxNodes: maxNodes, maxDepth: maxDepth),
-           !application.children.isEmpty {
-            return .value(application)
+        if let application = liveApplication(maxNodes: maxNodes, maxDepth: maxDepth),
+           let element = application.element,
+           !element.children.isEmpty {
+            rememberScrollElements(application.live, limits: limits)
+            return .value(element)
         }
         if let choice = choices.first(where: \.found), let element = choice.element {
+            rememberScrollElements(choice.live, limits: limits)
             return .value(element)
         }
+        scrollElements?.reset()
         return .unavailable
     }
 
     public func readWindowChoices(maxNodes: Int, maxDepth: Int) -> [AccessibilityWindowChoice] {
+        liveChoices(maxNodes: maxNodes, maxDepth: maxDepth).map { choice in
+            AccessibilityWindowChoice(source: choice.source, found: choice.found, element: choice.element)
+        }
+    }
+
+    public func readApplicationElement(maxNodes: Int, maxDepth: Int) -> AccessibilityElement? {
+        liveApplication(maxNodes: maxNodes, maxDepth: maxDepth)?.element
+    }
+
+    private struct LiveChoice {
+        var source: String
+        var found: Bool
+        var element: AccessibilityElement?
+        var live: AXUIElement?
+    }
+
+    private func liveChoices(maxNodes: Int, maxDepth: Int) -> [LiveChoice] {
         guard AXIsProcessTrusted() else {
-            return [AccessibilityWindowChoice(source: "focused", found: false, element: nil)]
+            return [LiveChoice(source: "focused", found: false, element: nil, live: nil)]
         }
         let system = AXUIElementCreateSystemWide()
         guard let application = copyElement(system, kAXFocusedApplicationAttribute) else {
-            return [AccessibilityWindowChoice(source: "focused", found: false, element: nil)]
+            return [LiveChoice(source: "focused", found: false, element: nil, live: nil)]
         }
         let limits = TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth)
-        var choices: [AccessibilityWindowChoice] = []
+        var choices: [LiveChoice] = []
         var seen: [AXUIElement] = []
         func append(_ element: AXUIElement?, source: String, recordMiss: Bool) {
             guard let element else {
                 if recordMiss {
-                    choices.append(AccessibilityWindowChoice(source: source, found: false, element: nil))
+                    choices.append(LiveChoice(source: source, found: false, element: nil, live: nil))
                 }
                 return
             }
@@ -107,17 +133,18 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
                 return
             }
             seen.append(element)
-            choices.append(AccessibilityWindowChoice(
+            choices.append(LiveChoice(
                 source: source,
                 found: true,
-                element: copiedTree(element, limits: limits)
+                element: copiedTree(element, limits: limits),
+                live: element
             ))
         }
         append(copyElement(application, kAXFocusedWindowAttribute), source: "focused", recordMiss: true)
         append(copyElement(application, kAXMainWindowAttribute), source: "main", recordMiss: true)
         let windows = copyElements(application, kAXWindowsAttribute)
         if windows.isEmpty {
-            choices.append(AccessibilityWindowChoice(source: "windows", found: false, element: nil))
+            choices.append(LiveChoice(source: "windows", found: false, element: nil, live: nil))
         } else {
             for window in windows.prefix(8) {
                 append(window, source: "windows", recordMiss: false)
@@ -126,7 +153,7 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
         return choices
     }
 
-    public func readApplicationElement(maxNodes: Int, maxDepth: Int) -> AccessibilityElement? {
+    private func liveApplication(maxNodes: Int, maxDepth: Int) -> LiveChoice? {
         guard AXIsProcessTrusted() else {
             return nil
         }
@@ -134,12 +161,31 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
         guard let application = copyElement(system, kAXFocusedApplicationAttribute) else {
             return nil
         }
-        return copiedTree(application, limits: TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth))
+        return LiveChoice(
+            source: "application",
+            found: true,
+            element: copiedTree(application, limits: TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth)),
+            live: application
+        )
+    }
+
+    /// Binds the chosen window under the same path keys the catalog will use.
+    /// The copy used for the catalog is separate; this walk only keeps elements.
+    private func rememberScrollElements(_ element: AXUIElement?, limits: TreeWalkLimits) {
+        guard let scrollElements else {
+            return
+        }
+        scrollElements.reset()
+        guard let element else {
+            return
+        }
+        var remaining = limits.maxNodes
+        _ = snapshotTree(element, path: [], depth: 0, limits: limits, remaining: &remaining, bind: true)
     }
 
     private func copiedTree(_ element: AXUIElement, limits: TreeWalkLimits) -> AccessibilityElement {
         var remaining = limits.maxNodes
-        return snapshotTree(element, depth: 0, limits: limits, remaining: &remaining)
+        return snapshotTree(element, path: [], depth: 0, limits: limits, remaining: &remaining, bind: false)
     }
 
     private func snapshot(of element: AXUIElement, identify: Bool = false) -> AccessibilityElement {
@@ -166,11 +212,16 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
 
     private func snapshotTree(
         _ element: AXUIElement,
+        path: [Int],
         depth: Int,
         limits: TreeWalkLimits,
-        remaining: inout Int
+        remaining: inout Int,
+        bind: Bool
     ) -> AccessibilityElement {
         remaining -= 1
+        if bind {
+            scrollElements?.bind(element, identifier: ScrollTargetIdentity.identifier(path: path))
+        }
         var node = snapshot(of: element)
         let children = copyChildren(element)
         if children.isEmpty {
@@ -181,12 +232,19 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
             return node
         }
         var copied: [AccessibilityElement] = []
-        for child in children {
+        for (index, child) in children.enumerated() {
             if remaining <= 0 {
                 node.childrenTruncated = true
                 break
             }
-            copied.append(snapshotTree(child, depth: depth + 1, limits: limits, remaining: &remaining))
+            copied.append(snapshotTree(
+                child,
+                path: path + [index],
+                depth: depth + 1,
+                limits: limits,
+                remaining: &remaining,
+                bind: bind
+            ))
         }
         if copied.count < children.count {
             node.childrenTruncated = true

@@ -191,6 +191,9 @@ final class SupervimRuntimeTests: XCTestCase {
         XCTAssertTrue(text.contains("HintController"))
         XCTAssertTrue(text.contains("refreshClickables()"))
         XCTAssertTrue(text.contains("NonActivatingHintPanel"))
+        XCTAssertTrue(text.contains("AXElementStore()"))
+        XCTAssertTrue(text.contains("edgeBars: scrollElements"))
+        XCTAssertTrue(text.contains("AXSystemReader(scrollElements: scrollElements)"))
         let runtime = try String(
             contentsOf: repoRoot().appendingPathComponent("Sources/SupervimSystem/SupervimRuntime.swift"),
             encoding: .utf8

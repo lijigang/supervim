@@ -13,7 +13,8 @@ public enum MenuHookAssembly {
         observer: any RuntimeObserving,
         misses: HintMissBanner = HintMissBanner()
     ) -> SupervimRuntime {
-        let reader = AXSystemReader()
+        let scrollElements = AXElementStore()
+        let reader = AXSystemReader(scrollElements: scrollElements)
         let signals = AXFocusSignal()
         let fanout = FanoutSignals(inner: signals)
         let pipeline = FocusPipeline(
@@ -22,8 +23,8 @@ public enum MenuHookAssembly {
             signals: fanout,
             waiter: AccessibilityTreeSleeper()
         )
-        let poster = CGEventActuatorPoster()
-        let actuator = ActionActuator(poster: poster)
+        let poster = CGEventActuatorPoster(accessibility: scrollElements)
+        let actuator = ActionActuator(poster: poster, edgeBars: scrollElements)
         let focuser = AXInputFocuser()
         let panel = NonActivatingHintPanel()
         let hints = HintController(

@@ -36,6 +36,17 @@ public struct ScrollCatalog: Equatable, Sendable {
     }
 }
 
+/// Path key shared by the catalog and the live accessibility element store.
+/// An empty path is the window root. A child path is indexes joined by `/`.
+public enum ScrollTargetIdentity {
+    public static func identifier(path: [Int]) -> String {
+        if path.isEmpty {
+            return "root"
+        }
+        return path.map(String.init).joined(separator: "/")
+    }
+}
+
 /// Scroll targets copied from a window that was already read off the key hook.
 ///
 /// A node with no usable scroll bar is not a target. Role `AXScrollArea` alone
@@ -128,7 +139,7 @@ public enum ScrollAreaCatalog {
             return nil
         }
         return ScrollArea(
-            identifier: isRoot ? "root" : path.map(String.init).joined(separator: "/"),
+            identifier: ScrollTargetIdentity.identifier(path: isRoot ? [] : path),
             frame: rect,
             depth: isRoot ? 0 : path.count,
             containsPointer: contains(rect, pointer),
@@ -161,7 +172,7 @@ public enum ScrollAreaCatalog {
             return nil
         }
         return ScrollArea(
-            identifier: isRoot ? "root" : path.map(String.init).joined(separator: "/"),
+            identifier: ScrollTargetIdentity.identifier(path: isRoot ? [] : path),
             frame: rect,
             depth: isRoot ? 0 : path.count,
             containsPointer: false,
