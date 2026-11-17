@@ -1,6 +1,6 @@
 # 微信滚动、视觉标签、gi 和标签位置
 
-记录日期：2026-11-17。Linux，Ubuntu 24.04，Swift 6.2.1。基线是 `65d868f`（v0.1.3）。没有微信，也没有 Mac。`AXApplicationReader.swift`、`VisionHintCapture.swift`、`FrontWindowFrame.swift`、`HintOverlayWindow.swift` 整段包在 macOS 条件里，这里不编译。
+记录日期：2026-11-17。Linux，Ubuntu 24.04，Swift 6.2.1。基线是 `78d6f50`（v0.1.3 加上界面抛光）。没有微信，也没有 Mac。`AXApplicationReader.swift`、`VisionHintCapture.swift`、`FrontWindowFrame.swift`、`HintOverlayWindow.swift` 整段包在 macOS 条件里，这里不编译。
 
 ## 根因
 
@@ -37,7 +37,7 @@ swift test --filter testGIClicksTheFieldAndEntersInsertWhenAccessibilityFocusIsR
 
 ## 通过
 
-`swift test` 退出码 0。Linux 执行 674 个测试，0 失败。`testModifierMasksMatchCoreGraphics` 只在 macOS 上跑，所以 macOS 会多 1 个，一共 675。
+`swift test` 退出码 0。变基到 `78d6f50`（界面抛光）之后，Linux 执行 685 个测试，0 失败。`testModifierMasksMatchCoreGraphics` 只在 macOS 上跑，所以 macOS 会多 1 个，一共 686。macOS 上 `SCScreenshotManager` 的等待放在一个 `@Sendable` 任务里，截图只写进本进程的槽，不把非 Sendable 的闭包交给 `Task`。
 
 覆盖率（Linux，`llvm-cov`，门是 90%）：`Actuator.swift` 98.13%，`AXScanner.swift` 93.41%，`NormalCommandSession.swift` 96.18%，`HintOverlay.swift` 96.07%，`ModeMachine.swift` 100%，`PermissionGuide.swift` 100%，`Settings.swift` 99.75%，`EventInterpreter.swift` 96.33%。
 
