@@ -6,7 +6,7 @@
 - Swift：6.4.2（swift-6.4.2-RELEASE），本机原先没有 Swift，这次用官方 Ubuntu 24.04 工具链解到 `/tmp/swift-install/swift-6.4.2-RELEASE-ubuntu24.04`，只为了跑纯逻辑测试
 - 没有 macOS，没有 Xcode，没有 AppKit，没有 CoreGraphics
 
-因此下面能证明的是菜单文案、暂停恢复、排除列表和设置写入的先失败、后通过，以及 Linux 上 `MenuBarController.swift` 的覆盖率。不能证明状态栏真的画出来了，也不能证明 `Ctrl+Option+V` 在真机上被系统送到本进程。macOS 上的编译、同一组测试和覆盖率交给 GitHub Actions。写本文时那次 CI 还没有结果。
+因此下面能证明的是菜单文案、暂停恢复、排除列表和设置写入的先失败、后通过，以及 Linux 上 `MenuBarController.swift` 的覆盖率。不能证明状态栏真的画出来了，也不能证明 `Ctrl+Option+V` 在真机上被系统送到本进程。macOS 上的编译、同一组测试和覆盖率交给 GitHub Actions。第一次 macOS 构建没有通过，原因和改法写在文末。写本文初稿时那次 CI 还没有结果。
 
 ## 范围
 
@@ -165,6 +165,21 @@ Hint 显示成 Normal，因为规格只点了 Normal、Insert、Paused 三个词
 10. **全局热键没有单独的注册，也没有标成通过。** 规格要求 `Ctrl+Option+V`。现有路径是事件钩子里的按键决策，需要输入监控权限，并且焦点必须已知、应用不在排除列表里。没有使用 Carbon `RegisterEventHotKey`。菜单栏、未签名的 `LSUIElement` 进程能不能用那套 API 稳定收到热键，计划没有写成保证。本环境没有 Mac，单元测试喂的是 `KeyEvent`，不是系统热键。真机行为保持未验证。
 11. **偏好套件打不开，或文档损坏时，菜单改用内存设置。** 不覆盖原来的坏文档。这没有在 macOS 上试过。套件名仍是任务 6 的 `com.lijigang.supervim`。
 12. **前台 bundle id 由应用在主线程读 `NSWorkspace`。** 核心只收一个字符串。Linux 测试用替身。没有对真实前台应用试过。
+
+## macOS CI：`@main` 不能放在 `canImport` 里
+
+第一次 macOS 运行：<https://github.com/lijigang/supervim/actions/runs/44036636639>，作业 <https://github.com/lijigang/supervim/actions/runs/44036636639/job/133880980048>。提交 `5c55fa7`。Swift 6.3.3，Xcode 26.6。`swift build` 失败，测试没有开始。退出码 1。
+
+```text
+Sources/Supervim/main.swift:153:1: error: 'main' attribute cannot be used in a module that contains top-level code
+  1 | #if canImport(AppKit)
+    | |- note: top-level code defined in this source file
+153 | @main
+```
+
+Linux 上同一份文件能编译。可执行目标遇到文件开头的 `#if canImport(AppKit)` 时，不会把它折成「这里只有声明」，于是拒绝 `@main`。`#if os(macOS)` 可以被折掉，任务 1 的入口就是这样通过的。
+
+改法：`main.swift` 的入口改回 `#if os(macOS)`。状态栏、设置窗口和 `NSWorkspace` 仍留在 `#if canImport(AppKit)` 里。Linux 两条都进不了，所以仍然不编译 AppKit。源码测试锁住入口文件以 `#if os(macOS)` 开头，并且入口文件自己不再写 `canImport(AppKit)`。
 
 ## 没有测的东西
 
