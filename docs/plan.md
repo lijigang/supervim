@@ -64,4 +64,4 @@
 - 不实现 KeyParser、ModeMachine、HintLabeler、CommandMap、Settings 的功能。
 - 不实现 EventTap、AXScanner、Actuator、Overlay、权限引导或 DMG。
 - 不把覆盖率、内存、CPU、`f` 延迟写成已测量。
-- 任务 1 保持 `in-progress`，直到这个 PR 被评审。其余任务保持 `pending`。
+- 任务 1 已合并，状态为 `done`。任务 2 在评审前保持 `in-progress`。其余任务保持 `pending`。
