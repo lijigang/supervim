@@ -7,9 +7,9 @@ public enum EventTapError: Error, Equatable, Sendable {
 }
 
 /// Installs a session event tap and forwards key records to `EventTapWiring`.
-/// The menu-bar app does not start this. The focus scanner is not wired yet.
-/// A known, non-editable cache would swallow commands before the app performs
-/// them, which drops keystrokes. Leave the tap uninstalled until that cache is real.
+/// The callback decides swallow or pass-through. `NormalCommandSession` performs
+/// scrolls and shortcuts. The menu-bar app installs this only after the focus
+/// scanner is running and Accessibility plus Input Monitoring are granted.
 public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
     private let box: EventTapBox
     private let lock = NSLock()

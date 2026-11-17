@@ -3,7 +3,7 @@
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
       "updated": "2026-11-17T07:27:20.000Z",
-      "description": "Supervim 已批准任务。任务 1 到任务 9 已合并，状态为 done。任务 10 和任务 13 为 done。任务 11、12、14 和 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "description": "Supervim 已批准任务。任务 1 到任务 9 已合并，状态为 done。任务 10、11 和 13 为 done。任务 12、14 和 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -120,7 +120,7 @@
         "id": 11,
         "title": "滚动、gi、放过下一键与应用快捷键",
         "description": "实现滚动、回到顶部或底部、gi、Ctrl+] 以及历史、标签和查找快捷键。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [7, 8, 9],
         "priority": "medium",
         "details": "j/k/h/l 按标准 Vimium 方向滚动，d/u 半页，gg/G 顶部和底部，作用在指针或焦点所在的可滚动区域。gi 聚焦第一个输入框并进入 Insert。Ctrl+] 放过下一个按键。H/L、J/K、x、t、r、/ 映射到应用快捷键。yy 只对 Safari 和 Chromium 复制 URL。微信、备忘录和 Safari 地址栏的不吞字验收属于规格，完成前不得标成已测。",

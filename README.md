@@ -8,9 +8,13 @@ Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard c
 
 **Task 13 replaces the menu-bar placeholder with the mode.** The status title is Normal, Insert, or Paused. Hint is shown as Normal. The menu can pause, resume, open settings, and quit. Pause is written to settings and restored on the next launch. The settings window can add the frontmost app, remove an exclusion, and toggle the launch-at-login preference. That preference is stored only; nothing registers a login item. The exclusion list still defaults to Terminal, iTerm, and Emacs, and a match passes every key through, including the pause chord. Task 8's focus scanner is in the library. The menu process does not start it and does not install the event tap. Once the tap is installed, a known non-editable focus would swallow commands, and this process does not perform those actions yet.
 
-**任务 10 为当前窗口里已经扫到的可点击元素显示透明、不抢焦点的标签。** 应用层调用 `HintOverlayControlling`：`refreshClickables()` 在钩子外刷新，`enterHint` 显示标签，`receiveHintKey` 接收后续按键，`cancelHint` 取消。`f` 键入完整标签后，在元素中心左键点击并关掉标签。`F` 用同一套标签，点击时按住 Command，不是右键菜单。Esc、无效输入、没有目标或扫描不可用都会取消，并且不点击。菜单进程不安装事件钩子，也不启动 AXScanner；那一步留给任务 11。Safari、Finder 和系统设置上的 200ms 与 90% 覆盖率这次没有测量。
+**任务 10 为当前窗口里已经扫到的可点击元素显示透明、不抢焦点的标签。** 应用层调用 `HintOverlayControlling`：`refreshClickables()` 在钩子外刷新，`enterHint` 显示标签，`receiveHintKey` 接收后续按键，`cancelHint` 取消。`f` 键入完整标签后，在元素中心左键点击并关掉标签。`F` 用同一套标签，点击时按住 Command，不是右键菜单。Esc、无效输入、没有目标或扫描不可用都会取消，并且不点击。点中或取消后用 `endHint` 回到 Normal。Safari、Finder 和系统设置上的 200ms 与 90% 覆盖率这次没有测量。
 
-**Task 10 shows transparent, non-activating labels on clickable elements already scanned in the current window.** The app calls `HintOverlayControlling`: `refreshClickables()` off the hook, `enterHint` to show labels, `receiveHintKey` for later keys, and `cancelHint` to dismiss. `f` clicks the center of an element with the left button once its full label is typed, then hides the labels. `F` uses the same labels and holds Command for the click. It is not a context menu. Escape, invalid input, no targets, or an unavailable scan all cancel without clicking. The menu process does not install the event tap or start AXScanner; task 11 does that wiring. The 200ms and 90% coverage targets in Safari, Finder, and System Settings were not measured.
+**Task 10 shows transparent, non-activating labels on clickable elements already scanned in the current window.** The app calls `HintOverlayControlling`: `refreshClickables()` off the hook, `enterHint` to show labels, `receiveHintKey` for later keys, and `cancelHint` to dismiss. `f` clicks the center of an element with the left button once its full label is typed, then hides the labels. `F` uses the same labels and holds Command for the click. It is not a context menu. Escape, invalid input, no targets, or an unavailable scan all cancel without clicking. A click or a cancel returns to Normal through `endHint`. The 200ms and 90% coverage targets in Safari, Finder, and System Settings were not measured.
+
+**任务 11 把滚动、应用快捷键和 f/F 接到正在运行的钩子。** 有辅助功能和输入监控权限时，先启动 AXScanner，再安装事件钩子。钩子与菜单共用同一个解释器。选不到可滚动区域时，原来的按键交还。进入 Hint 时调用 `HintController` 显示标签，后续按键交给它。`?` 帮助在任务 12 接入前放过，不吞键。`yy` 沿用任务 9 的浏览器名单。权限缺失时不装钩子。微信、备忘录和 Safari 地址栏不吞字仍未测。
+
+**Task 11 connects scrolling, application shortcuts, and f/F to the running hook.** When Accessibility and Input Monitoring are both granted, it starts AXScanner and then installs the event tap. The hook and the menu share one interpreter. A scroll with no target gives the original key back. Entering Hint calls `HintController` to show labels, and later keys go to it. `?` passes through until task 12 claims help. Copy URL keeps task 9's browser list. Missing permissions do not install the hook. Not swallowing characters in WeChat, Notes, and the Safari address bar is still untested.
 
 ## 文档 / Docs
 
@@ -28,6 +32,7 @@ Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard c
 - [任务 8 测试记录 / Task 8 test evidence](docs/task8-test-evidence.md)
 - [任务 9 测试记录 / Task 9 test evidence](docs/task9-test-evidence.md)
 - [任务 10 测试记录 / Task 10 test evidence](docs/task10-test-evidence.md)
+- [任务 11 测试记录 / Task 11 test evidence](docs/task11-test-evidence.md)
 - [任务 13 测试记录 / Task 13 test evidence](docs/task13-test-evidence.md)
 
 规格文末单独列出了尚未能保证的平台行为。那些条目没有改写已批准的要求。
@@ -64,9 +69,9 @@ scripts/assemble-app.sh release
 
 ```text
 Package.swift                 SwiftPM 描述，macOS 13+，Swift 6
-Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings、EventInterpreter、MenuBarController、HintSession
-Sources/SupervimSystem        系统适配。含菜单栏预检、UserDefaults、EventTap、AXScanner、Actuator，以及标签浮层。macOS 上另有 CGEvent 合成和不激活面板
-Sources/Supervim              菜单栏应用。模式菜单和设置窗口在 AppKit 里；逻辑在 MenuBarController。不安装事件钩子，也不启动 AXScanner 或标签浮层
+Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings、EventInterpreter、CommandFollowThrough、MenuBarController、HintSession
+Sources/SupervimSystem        系统适配。含菜单栏预检、UserDefaults、EventTap、AXScanner、Actuator、标签浮层，以及任务 11 的滚动目录和命令会话。macOS 上另有 CGEvent 合成、不激活面板和输入框聚焦
+Sources/Supervim              菜单栏应用。有权限时启动 AXScanner 并安装事件钩子；f/F 交给 HintController
 App/Supervim/Info.plist       应用包清单，含 LSUIElement
 scripts/assemble-app.sh       组装未签名 .app
 Tests                         XCTest
@@ -79,8 +84,8 @@ docs                          已批准的中文宪法、规格、计划和任�
 
 ## CI
 
-推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、十个覆盖率脚本和 `scripts/assemble-app.sh`，并检查组装结果里的 `LSUIElement`。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift`、`EventTap.swift`、`Actuator.swift`、`AXScanner.swift`、`MenuBarController.swift`、`HintSession.swift` 和 `HintOverlay.swift` 的行覆盖率不低于 90%。`AXApplicationReader.swift`、`CGEventActuator.swift`、`HintOverlayWindow.swift` 和菜单的 AppKit 胶水只在 macOS 上编译，不计入这个门槛。
+推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、十一个覆盖率脚本和 `scripts/assemble-app.sh`，并检查组装结果里的 `LSUIElement`。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift`、`EventTap.swift`、`Actuator.swift`、`AXScanner.swift`、`MenuBarController.swift`、`HintSession.swift`、`HintOverlay.swift`、`CommandFollowThrough.swift`、`NormalCommandSession.swift`、`ScrollAreaCatalog.swift` 和 `SupervimRuntime.swift` 的行覆盖率不低于 90%。`AXApplicationReader.swift`、`CGEventActuator.swift`、`HintOverlayWindow.swift`、`AXInputFocuser.swift` 和菜单的 AppKit 胶水只在 macOS 上编译，不计入这个门槛。
 
 ## 工作流工具 / Workflow tools
 
-本仓库没有 spec-kit，也没有 task-master CLI。任务文件是按上游 schema 手写的，说明见 [任务文档](docs/tasks.md#task-master-格式)。测试记录写在 `docs/task1-test-evidence.md` 到 `docs/task13-test-evidence.md`。任务 11、12、14 的记录不在本分支。
+本仓库没有 spec-kit，也没有 task-master CLI。任务文件是按上游 schema 手写的，说明见 [任务文档](docs/tasks.md#task-master-格式)。测试记录写在 `docs/task1-test-evidence.md` 到 `docs/task13-test-evidence.md`。任务 12 和 14 还没有记录。
