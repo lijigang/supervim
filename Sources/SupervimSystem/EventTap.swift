@@ -4,10 +4,19 @@ import SupervimCore
 public protocol KeyDeciding: AnyObject, Sendable {
     func handleKeyDown(_ event: KeyEvent, cache: CachedFocus) -> EventDecision
     func updateCache(_ cache: CachedFocus) -> EventDecision
+    func endHint(_ reason: HintEnd) -> EventDecision
     var mode: SupervimMode { get }
 }
 
 extension EventInterpreter: KeyDeciding {}
+
+/// What the event-tap callback asks. `EventTapWiring` decides.
+/// `SessionTapAdapter` decides and then performs.
+public protocol SystemKeyHandling: AnyObject, Sendable {
+    func handleSystemRecord(_ record: SystemKeyRecord) -> SystemKeyOutcome
+}
+
+extension EventTapWiring: SystemKeyHandling {}
 
 public protocol FocusCacheReading: AnyObject, Sendable {
     func currentFocus() -> CachedFocus

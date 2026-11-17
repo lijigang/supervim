@@ -17,7 +17,7 @@ public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
     private var source: CFRunLoopSource?
     private var runLoop: CFRunLoop?
 
-    public init(wiring: EventTapWiring) {
+    public init(wiring: any SystemKeyHandling) {
         box = EventTapBox(wiring: wiring)
     }
 
@@ -83,11 +83,11 @@ public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
 }
 
 private final class EventTapBox: @unchecked Sendable {
-    let wiring: EventTapWiring
+    let wiring: any SystemKeyHandling
     private let lock = NSLock()
     private var port: CFMachPort?
 
-    init(wiring: EventTapWiring) {
+    init(wiring: any SystemKeyHandling) {
         self.wiring = wiring
     }
 

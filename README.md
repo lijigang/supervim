@@ -4,9 +4,9 @@ Supervim 是一个原生 macOS 菜单栏应用，目标是提供 Vimium 风格�
 
 Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard control. It uses Swift and AppKit, not Electron. The running app does not use the network and does not record keystrokes.
 
-**任务 13 把菜单栏换成模式显示。** 状态标题是 Normal、Insert 或 Paused。Hint 也显示成 Normal。菜单可以暂停、恢复、打开设置和退出。暂停会写入设置，下次启动仍然暂停。设置窗口可以加入当前前台应用、移除排除项，以及切换登录启动偏好。登录项只保存偏好，不向系统注册。排除列表默认仍是 Terminal、iTerm、Emacs；命中时按键原样放过，包括暂停键。任务 8 的焦点扫描器已经在库里，菜单进程不启动它，也不安装事件钩子。钩子一旦装上，已知且不可编辑的焦点会吞掉命令，而这些动作还没有从菜单进程执行。
+**任务 13 把菜单栏换成模式显示。** 状态标题是 Normal、Insert 或 Paused。Hint 也显示成 Normal。菜单可以暂停、恢复、打开设置和退出。暂停会写入设置，下次启动仍然暂停。设置窗口可以加入当前前台应用、移除排除项，以及切换登录启动偏好。登录项只保存偏好，不向系统注册。排除列表默认仍是 Terminal、iTerm、Emacs；命中时按键原样放过，包括暂停键。
 
-**Task 13 replaces the menu-bar placeholder with the mode.** The status title is Normal, Insert, or Paused. Hint is shown as Normal. The menu can pause, resume, open settings, and quit. Pause is written to settings and restored on the next launch. The settings window can add the frontmost app, remove an exclusion, and toggle the launch-at-login preference. That preference is stored only; nothing registers a login item. The exclusion list still defaults to Terminal, iTerm, and Emacs, and a match passes every key through, including the pause chord. Task 8's focus scanner is in the library. The menu process does not start it and does not install the event tap. Once the tap is installed, a known non-editable focus would swallow commands, and this process does not perform those actions yet.
+**Task 13 replaces the menu-bar placeholder with the mode.** The status title is Normal, Insert, or Paused. Hint is shown as Normal. The menu can pause, resume, open settings, and quit. Pause is written to settings and restored on the next launch. The settings window can add the frontmost app, remove an exclusion, and toggle the launch-at-login preference. That preference is stored only; nothing registers a login item. The exclusion list still defaults to Terminal, iTerm, and Emacs, and a match passes every key through, including the pause chord.
 
 **任务 10 为当前窗口里已经扫到的可点击元素显示透明、不抢焦点的标签。** 应用层调用 `HintOverlayControlling`：`refreshClickables()` 在钩子外刷新，`enterHint` 显示标签，`receiveHintKey` 接收后续按键，`cancelHint` 取消。`f` 键入完整标签后，在元素中心左键点击并关掉标签。`F` 用同一套标签，点击时按住 Command，不是右键菜单。Esc、无效输入、没有目标或扫描不可用都会取消，并且不点击。点中或取消后用 `endHint` 回到 Normal。Safari、Finder 和系统设置上的 200ms 与 90% 覆盖率这次没有测量。
 
@@ -57,7 +57,7 @@ open build/Supervim.app
 
 `swift test` 会编译三个 SwiftPM 目标并运行 XCTest。`scripts/assemble-app.sh` 把调试版二进制装进 `build/Supervim.app`。这个包的 `Info.plist` 设置了 `LSUIElement=true`，所以通过 Finder 或 `open` 启动时没有 Dock 图标。包是未签名的，任务 15 才会做 DMG。
 
-直接 `swift run` 时，系统不会把裸二进制当成带 `LSUIElement` 的应用包。程序会改用 accessory 激活策略，避免开发时出现 Dock 图标。状态栏显示 Normal、Insert 或 Paused，菜单里有暂停、恢复、设置和退出。启动时不安装事件钩子。
+直接 `swift run` 时，系统不会把裸二进制当成带 `LSUIElement` 的应用包。程序会改用 accessory 激活策略，避免开发时出现 Dock 图标。状态栏显示 Normal、Insert 或 Paused，菜单里有暂停、恢复、设置和退出。辅助功能和输入监控都已授予时，启动会先跑焦点扫描，再安装事件钩子；`f` / `F` 交给标签浮层。缺权限则不安装，也不崩溃。
 
 发布构建：
 

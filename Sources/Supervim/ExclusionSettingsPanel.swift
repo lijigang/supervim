@@ -133,24 +133,42 @@ final class ExclusionSettingsPanel: NSWindowController, NSWindowDelegate {
     }
 }
 
-/// Menu-bar status, pause, and settings. The event tap stays uninstalled:
-/// the focus scanner is not wired, and swallowing commands here would drop keys.
+/// Menu-bar status, pause, and settings. When both permissions are granted,
+/// the shared interpreter starts the scanner and then the event tap.
 @MainActor
 final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettingsPanelDelegate {
     private var statusItem: NSStatusItem?
     private var settingsPanel: ExclusionSettingsPanel?
     private let session: MenuBarController<SystemKeyClock>
+    private let hookObserver: HookMenuObserver
+    private let runtime: SupervimRuntime
 
     override init() {
-        session = MenuBarApplication.makeSession(frontmost: WorkspaceFrontmost())
+        let session = MenuBarApplication.makeSession(frontmost: WorkspaceFrontmost())
+        let observer = HookMenuObserver()
+        self.session = session
+        self.hookObserver = observer
+        self.runtime = MenuHookAssembly.make(decider: session.keyDecider, observer: observer)
         super.init()
+        observer.onEvent = { [weak self] in
+            Task { @MainActor in
+                self?.refreshAfterHook()
+            }
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = notification
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
+        _ = runtime.start()
         installMenu()
+    }
+
+    private func refreshAfterHook() {
+        try? session.noteExternalDecision()
+        installMenu()
+        settingsPanel?.render(session.editor())
     }
 
     func exclusionPanelDidAddFrontmost() {
@@ -269,6 +287,15 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
         } catch {
             preconditionFailure("in-memory settings must load")
         }
+    }
+}
+
+final class HookMenuObserver: RuntimeObserving, @unchecked Sendable {
+    var onEvent: (@Sendable () -> Void)?
+
+    func runtimeDidHandle(_ decision: EventDecision?) {
+        _ = decision
+        onEvent?()
     }
 }
 

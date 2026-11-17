@@ -11,6 +11,11 @@ public protocol InputFocusing: AnyObject, Sendable {
     func focusInput(path: [Int]) -> Bool
 }
 
+/// Task 12 claims `?`. Returning false, or a nil handler, gives that key back.
+public protocol HelpCommandHandling: AnyObject, Sendable {
+    func claimHelp() -> Bool
+}
+
 /// One key after the actuator and the focus request have run.
 public struct CommandPerformance: Equatable, Sendable {
     public var delivery: KeyDelivery
@@ -18,19 +23,23 @@ public struct CommandPerformance: Equatable, Sendable {
     public var decision: EventDecision?
     public var outcomes: [ActuatorOutcome]
     public var focusedPath: [Int]?
+    /// Nil when the key is given back. A swallow always has a reason.
+    public var swallowReason: SwallowReason?
 
     public init(
         delivery: KeyDelivery,
         mode: SupervimMode,
         decision: EventDecision?,
         outcomes: [ActuatorOutcome],
-        focusedPath: [Int]?
+        focusedPath: [Int]?,
+        swallowReason: SwallowReason? = nil
     ) {
         self.delivery = delivery
         self.mode = mode
         self.decision = decision
         self.outcomes = outcomes
         self.focusedPath = focusedPath
+        self.swallowReason = swallowReason
     }
 }
 
@@ -70,6 +79,8 @@ public final class NormalCommandSession: @unchecked Sendable {
     private let snapshots: LockedCommandSnapshot
     private let pointer: any PointerReading
     private let focuser: any InputFocusing
+    private let hints: (any HintOverlayControlling)?
+    private let help: (any HelpCommandHandling)?
 
     public init(
         pipeline: FocusPipeline,
@@ -77,7 +88,9 @@ public final class NormalCommandSession: @unchecked Sendable {
         actuator: ActionActuator,
         snapshots: LockedCommandSnapshot,
         pointer: any PointerReading,
-        focuser: any InputFocusing
+        focuser: any InputFocusing,
+        hints: (any HintOverlayControlling)? = nil,
+        help: (any HelpCommandHandling)? = nil
     ) {
         self.pipeline = pipeline
         self.decider = decider
@@ -85,10 +98,16 @@ public final class NormalCommandSession: @unchecked Sendable {
         self.snapshots = snapshots
         self.pointer = pointer
         self.focuser = focuser
+        self.hints = hints
+        self.help = help
+    }
+
+    public func replaceSnapshot(_ snapshot: CommandSnapshot) {
+        snapshots.replace(snapshot)
     }
 
     public func handleKeyDown(_ event: KeyEvent) -> CommandPerformance {
-        finish(pipeline.wiring.handleKeyDown(event))
+        finish(pipeline.wiring.handleKeyDown(event), hintKeyCode: nil)
     }
 
     public func handleSystemRecord(_ record: SystemKeyRecord) -> CommandPerformance {
@@ -99,13 +118,14 @@ public final class NormalCommandSession: @unchecked Sendable {
                 mode: decider.mode,
                 decision: nil,
                 outcomes: [],
-                focusedPath: nil
+                focusedPath: nil,
+                swallowReason: nil
             )
         }
-        return finish(decision)
+        return finish(decision, hintKeyCode: record.keyCode)
     }
 
-    private func finish(_ decision: EventDecision) -> CommandPerformance {
+    private func finish(_ decision: EventDecision, hintKeyCode: UInt16?) -> CommandPerformance {
         let prepared = CommandFollowThrough.prepare(decision)
         let wantsActuation = decision.delivery == .swallow && !prepared.actuatorActions.isEmpty
         let wantsFocus = decision.delivery == .swallow && prepared.requestsFocus
@@ -131,7 +151,18 @@ public final class NormalCommandSession: @unchecked Sendable {
             }
         }
 
-        let delivery = CommandFollowThrough.delivery(prepared: prepared, reports: reports)
+        var delivery = CommandFollowThrough.delivery(prepared: prepared, reports: reports)
+        let overlayClaimed = claimOverlay(decision, hintKeyCode: hintKeyCode)
+        let actuated = reports.contains { $0 == .performed || $0 == .passedThrough }
+        var reason = CommandFollowThrough.swallowReason(
+            decision,
+            actuated: actuated,
+            focused: wantsFocus,
+            overlayClaimed: overlayClaimed
+        )
+        if delivery == .swallow, reason == nil {
+            delivery = .passThrough
+        }
         var mode = decision.mode
         var focusedPath: [Int]?
         if wantsFocus, let snapshot, delivery == .swallow, case .found(let target) = snapshot.firstInput {
@@ -140,14 +171,62 @@ public final class NormalCommandSession: @unchecked Sendable {
                 mode = pipeline.scanner.noteFocusChanged().mode
             }
         }
+        if overlayClaimed, isHint(decision.overlay) {
+            mode = decider.mode
+        }
+        if delivery == .passThrough, case .hint = decision.mode {
+            _ = decider.endHint(.cancelled)
+            mode = decider.mode
+            reason = nil
+        }
+        if delivery != .swallow {
+            reason = nil
+        }
 
         return CommandPerformance(
             delivery: delivery,
             mode: mode,
             decision: decision,
             outcomes: outcomes,
-            focusedPath: focusedPath
+            focusedPath: focusedPath,
+            swallowReason: reason
         )
+    }
+
+    private func claimOverlay(_ decision: EventDecision, hintKeyCode: UInt16?) -> Bool {
+        switch decision.overlay {
+        case .beginHint(let click):
+            guard let hints else {
+                return false
+            }
+            _ = hints.enterHint(click)
+            return true
+        case .hintKey(let event):
+            guard let hints else {
+                return false
+            }
+            _ = hints.receiveHintKey(event, keyCode: hintKeyCode)
+            return true
+        case .endHint:
+            guard let hints else {
+                return false
+            }
+            _ = hints.cancelHint()
+            return true
+        case .showHelp:
+            return help?.claimHelp() ?? false
+        case nil:
+            return false
+        }
+    }
+
+    private func isHint(_ update: OverlayUpdate?) -> Bool {
+        switch update {
+        case .beginHint, .hintKey, .endHint:
+            return true
+        case .showHelp, nil:
+            return false
+        }
     }
 
     private func isScroll(_ action: Action) -> Bool {

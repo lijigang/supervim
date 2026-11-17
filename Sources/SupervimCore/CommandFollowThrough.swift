@@ -32,6 +32,16 @@ public struct PreparedCommand: Equatable, Sendable {
 /// and every report is `passedThrough`. A declined shortcut stays swallowed:
 /// the binding was recognized, and replaying one key of `yy` would type a
 /// stray character. A key the interpreter already released stays released.
+public enum SwallowReason: Equatable, Sendable {
+    case actuator
+    case focus
+    case passNext
+    case heldPrefix
+    case pause
+    case overlay
+    case blur
+}
+
 public enum CommandFollowThrough {
     public static func prepare(_ decision: EventDecision) -> PreparedCommand {
         var actions: [Action] = []
@@ -67,10 +77,70 @@ public enum CommandFollowThrough {
         return .passThrough
     }
 
+    /// `nil` means the key must be given back. Hint and help are `nil` until a
+    /// later task claims the overlay. A declined shortcut still counts as
+    /// actuator work: the binding was handled by not posting it.
+    public static func swallowReason(
+        _ decision: EventDecision,
+        actuated: Bool,
+        focused: Bool,
+        overlayClaimed: Bool
+    ) -> SwallowReason? {
+        _ = focused
+        guard decision.delivery == .swallow else {
+            return nil
+        }
+        if decision.actions.contains(where: isPassNext) {
+            return .passNext
+        }
+        if decision.actions.contains(where: isFocus) {
+            return .focus
+        }
+        if decision.modeEffects.contains(.blurFocus) {
+            return .blur
+        }
+        if decision.mode == .paused {
+            return .pause
+        }
+        if decision.overlay != nil {
+            return overlayClaimed ? .overlay : nil
+        }
+        if actuated || decision.actions.contains(where: isActuatorAction) {
+            return .actuator
+        }
+        if decision.actions.isEmpty {
+            return .heldPrefix
+        }
+        return nil
+    }
+
     private static func isScroll(_ action: Action) -> Bool {
         if case .scroll = action {
             return true
         }
         return false
+    }
+
+    private static func isPassNext(_ action: Action) -> Bool {
+        if case .passNextKey = action {
+            return true
+        }
+        return false
+    }
+
+    private static func isFocus(_ action: Action) -> Bool {
+        if case .focusFirstInput = action {
+            return true
+        }
+        return false
+    }
+
+    private static func isActuatorAction(_ action: Action) -> Bool {
+        switch action {
+        case .scroll, .sendShortcut, .sequence:
+            return true
+        case .beginHint, .showHelp, .focusFirstInput, .passNextKey, .escape, .enterInsert:
+            return false
+        }
     }
 }

@@ -162,6 +162,71 @@ final class CommandFollowThroughTests: XCTestCase {
         XCTAssertEqual(CommandFollowThrough.delivery(prepared: prepared, reports: []), .swallow)
     }
 
+    func testUnclaimedHintAndHelpAreNotASwallowReason() {
+        let hint = EventDecision(
+            delivery: .swallow,
+            mode: .hint(.plain),
+            actions: [.beginHint(.plain)],
+            overlay: .beginHint(.plain)
+        )
+        XCTAssertNil(CommandFollowThrough.swallowReason(hint, actuated: false, focused: false, overlayClaimed: false))
+        XCTAssertEqual(
+            CommandFollowThrough.swallowReason(hint, actuated: false, focused: false, overlayClaimed: true),
+            .overlay
+        )
+        let help = EventDecision(delivery: .swallow, mode: .normal, actions: [.showHelp], overlay: .showHelp)
+        XCTAssertNil(CommandFollowThrough.swallowReason(help, actuated: false, focused: false, overlayClaimed: false))
+        XCTAssertEqual(
+            CommandFollowThrough.swallowReason(help, actuated: false, focused: false, overlayClaimed: true),
+            .overlay
+        )
+    }
+
+    func testSwallowedKeysHaveAReason() {
+        let passNext = EventDecision(delivery: .swallow, mode: .normal, actions: [.passNextKey])
+        XCTAssertEqual(
+            CommandFollowThrough.swallowReason(passNext, actuated: false, focused: false, overlayClaimed: false),
+            .passNext
+        )
+        let focus = EventDecision(delivery: .swallow, mode: .normal, actions: [.focusFirstInput])
+        XCTAssertEqual(
+            CommandFollowThrough.swallowReason(focus, actuated: false, focused: false, overlayClaimed: false),
+            .focus
+        )
+        let scroll = EventDecision(
+            delivery: .swallow,
+            mode: .normal,
+            actions: [.scroll(direction: .down, amount: .points(60))]
+        )
+        XCTAssertEqual(
+            CommandFollowThrough.swallowReason(scroll, actuated: true, focused: false, overlayClaimed: false),
+            .actuator
+        )
+        let held = EventDecision(delivery: .swallow, mode: .normal)
+        XCTAssertEqual(
+            CommandFollowThrough.swallowReason(held, actuated: false, focused: false, overlayClaimed: false),
+            .heldPrefix
+        )
+        let paused = EventDecision(delivery: .swallow, mode: .paused)
+        XCTAssertEqual(
+            CommandFollowThrough.swallowReason(paused, actuated: false, focused: false, overlayClaimed: false),
+            .pause
+        )
+        let blur = EventDecision(
+            delivery: .swallow,
+            mode: .normal,
+            modeEffects: [.swallowKey, .blurFocus]
+        )
+        XCTAssertEqual(
+            CommandFollowThrough.swallowReason(blur, actuated: false, focused: false, overlayClaimed: false),
+            .blur
+        )
+        let released = EventDecision(delivery: .passThrough, mode: .normal)
+        XCTAssertNil(
+            CommandFollowThrough.swallowReason(released, actuated: false, focused: false, overlayClaimed: false)
+        )
+    }
+
     func testFollowThroughSourceStaysInCore() throws {
         let url = repoRoot().appendingPathComponent("Sources/SupervimCore/CommandFollowThrough.swift")
         let text = try String(contentsOf: url, encoding: .utf8)

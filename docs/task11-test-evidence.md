@@ -174,9 +174,33 @@ ScrollAreaCatalog.swift function coverage: 100.00% (25/25)
 6. **截断的树不滚动。** 上限仍是任务 8 的 2000 个节点、深度 32。大页面可能因此放过 `j`。这是未确认的选择。
 7. **焦点点用框的中心。** 坐标不翻转。任务 9 已经要求调用方传入 Quartz 全局点。
 8. **`gi` 不发 `manualInsert`。** 聚焦之后走任务 8 的焦点分类。可编辑才自动进入 Insert。`unavailable` 不当成「页面上没有输入框」，也不聚焦一个更靠后的控件。
-9. **按键路径不扫窗口。** `CommandSnapshotBuilder` 在钩子外建快照。占位程序没有调用它。
-10. **占位程序和 `CGEventTapSession` 仍不执行动作。** 现在就安装钩子，会在微信、备忘录和 Safari 地址栏的不吞字验收完成之前吞掉 `j`。那三项保持未测。
+9. **按键路径不扫窗口。** `CommandSnapshotBuilder` 在钩子外建快照。焦点变化时刷新，不在按键回调里走树。
+10. **有两项权限才启动扫描器并安装钩子。** 缺权限不安装、不崩溃。`f` / `F` / `?` 在浮层和帮助接入前放过。微信、备忘录和 Safari 地址栏不吞字仍未测。
 11. **`yy` 的 bundle id 沿用任务 9，不新列一份。** Safari `com.apple.Safari`；Chrome `com.google.Chrome`；Chromium `org.chromium.Chromium`；Edge `com.microsoft.edgemac`；Brave `com.brave.Browser`；Arc `company.thebrowser.Browser`；Vivaldi `com.vivaldi.Vivaldi`。这些标识没有经过所有者确认。Firefox 和 Opera 不在里面。大小写和空白都要完全一致。
+
+## 接到菜单进程
+
+任务 13 合入 main 之后，本分支变基到 `bceff31`。任务 13 的状态保持 `done`。应用入口是 `Sources/Supervim/SupervimApp.swift` 的 `@main`。接线是可注入的 `SupervimRuntime`：辅助功能和输入监控都为真时，先 `focus.start()`，再 `hook.install()`。缺任一权限时两个都不调用，也不抛错。安装钩子失败时扫描器已经启动，进程不崩溃。
+
+钩子和菜单共用 `MenuBarController.keyDecider`。菜单暂停之后，钩子里的 `j` 放过，标题是 Paused。钩子上的暂停键会把 `isPaused` 写回设置。菜单把前台应用加进排除列表之后，钩子放过那个应用的键。扫描器报告可编辑焦点后，标题变成 Insert。
+
+任务 10 合入后，`f` / `F` 交给 `HintController`：`enterHint` 显示标签，后续按键走 `receiveHintKey`，Esc 走 `cancelHint`。点中或取消时控制器调用 `endHint`，模式回到 Normal。没有控制器时 `f` 仍放过，避免吞键。`?` 仍通过 `HelpCommandHandling` 留给任务 12；没人认领就放过。
+
+权限检查用 `AXIsProcessTrusted()` 和 `CGPreflightListenEventAccess()`，不调用会弹出引导的请求 API。引导仍是任务 14。
+
+这次新增测试在 `SupervimRuntimeTests`（11 个）和 `CommandFollowThroughTests` 的两条理由测试。原先「`f` 进入 Hint」的会话测试改成了未认领则放过。
+
+时间：2026-11-17 07:32:08 UTC 到 07:32:09 UTC。命令：`scripts/command-session-coverage.sh`。退出码 0。系统测试 174 个，核心测试 296 个，合计 470 个 XCTest，0 失败。
+
+```text
+CommandFollowThrough.swift line coverage: 98.97% (96/97)
+NormalCommandSession.swift line coverage: 93.62% (132/141)
+ScrollAreaCatalog.swift line coverage: 96.10% (197/205)
+SupervimRuntime.swift line coverage: 100.00% (40/40)
+MenuBarController.swift line coverage: 99.43% (175/176)
+```
+
+`MenuBarController.swift` 的数字来自同一份 profdata，不在本脚本的 90% 门槛里。门槛仍由菜单栏脚本检查。
 
 ## 没有测的东西
 
@@ -187,4 +211,4 @@ ScrollAreaCatalog.swift function coverage: 100.00% (25/25)
 - 微信、备忘录、Safari 地址栏里输入时字符不被吞掉：未测
 - 没有验证授权之后不重启就能读到滚动条或焦点
 - 没有测量 CPU 或内存
-- 菜单栏占位程序没有安装事件钩子，也没有启动这条会话
+- 这台 Linux 机器没有装上真正的事件钩子，也没有看过菜单标题跟着真实焦点变化

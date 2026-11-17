@@ -296,19 +296,23 @@ final class NormalCommandSessionTests: XCTestCase {
         XCTAssertEqual(fixture.reader.windowReads, 0)
     }
 
-    func testHintHelpAndManualInsertDoNotPost() {
+    func testUnclaimedHintAndHelpPassThroughAndManualInsertDoesNotPost() {
         let hint = makeSession(bundle: "com.apple.Safari")
         let started = hint.session.handleKeyDown(KeyEvent("f"))
-        XCTAssertEqual(started.mode, .hint(.plain))
+        XCTAssertEqual(started.delivery, .passThrough)
+        XCTAssertEqual(started.mode, .normal)
+        XCTAssertNil(started.swallowReason)
         XCTAssertTrue(hint.poster.effects.isEmpty)
         let typed = hint.session.handleKeyDown(KeyEvent("j"))
         XCTAssertEqual(typed.delivery, .swallow)
-        XCTAssertEqual(typed.mode, .hint(.plain))
-        XCTAssertTrue(hint.poster.effects.isEmpty)
+        XCTAssertEqual(typed.swallowReason, .actuator)
+        XCTAssertFalse(hint.poster.effects.isEmpty)
 
         let help = makeSession(bundle: "com.apple.Safari")
         let shown = help.session.handleKeyDown(KeyEvent("?"))
+        XCTAssertEqual(shown.delivery, .passThrough)
         XCTAssertEqual(shown.decision?.actions, [.showHelp])
+        XCTAssertEqual(shown.mode, .normal)
         XCTAssertTrue(help.poster.effects.isEmpty)
 
         let insert = makeSession(bundle: "com.apple.Safari")

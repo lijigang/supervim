@@ -46,6 +46,7 @@ sources=(
   "Sources/SupervimCore/CommandFollowThrough.swift"
   "Sources/SupervimSystem/NormalCommandSession.swift"
   "Sources/SupervimSystem/ScrollAreaCatalog.swift"
+  "Sources/SupervimSystem/SupervimRuntime.swift"
 )
 
 found_binary=0
