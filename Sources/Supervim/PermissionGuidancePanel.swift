@@ -37,6 +37,7 @@ final class PermissionGuidancePanel: NSWindowController, NSWindowDelegate {
     func render(_ guidance: PermissionGuidance) {
         window?.title = guidance.title
         chrome.render(guidance)
+        chrome.primaryButton?.title = guidance.checkAgainTitle
         if let button = chrome.primaryButton {
             window?.defaultButtonCell = button.cell as? NSButtonCell
         }
