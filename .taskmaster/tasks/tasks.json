@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T06:48:54.000Z",
-      "description": "Supervim 已批准任务。任务 1 到任务 7 已合并，状态为 done。任务 9 为 done。任务 8 以及任务 10 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T06:56:34.000Z",
+      "description": "Supervim 已批准任务。任务 1 到任务 7 已合并，状态为 done。任务 8 和任务 9 为 done。任务 10 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -87,7 +87,7 @@
         "id": 8,
         "title": "AXScanner 与自动 Insert",
         "description": "读取辅助功能树和焦点，判断当前焦点是否可编辑。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [1],
         "priority": "medium",
         "details": "扫描器放在系统适配层，核心只依赖返回可编辑、不可编辑或未知的结果。未知必须传给模式机作为放过。可编辑焦点自动进入 Insert。不把辅助功能行为写成平台保证：授权后是否无需重启立即生效仍是可行性问题，见规格中的歧义说明。不在事件钩子里做全树同步扫描。",

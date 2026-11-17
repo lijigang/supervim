@@ -2,7 +2,7 @@
 
 批准顺序如下。依赖没有满足时，不开始该任务。一个任务一个 PR，评审和所有者确认之后再进入下一个。
 
-任务 1 到任务 7 已合并，状态是 `done`。任务 9 已实现，状态是 `done`。任务 8，以及任务 10 到 15，是 `pending`。机器可读的同一份数据在 [`.taskmaster/tasks/tasks.json`](../.taskmaster/tasks/tasks.json)。
+任务 1 到任务 7 已合并，状态是 `done`。任务 8 和任务 9 已实现，状态是 `done`。任务 10 到 15 是 `pending`。机器可读的同一份数据在 [`.taskmaster/tasks/tasks.json`](../.taskmaster/tasks/tasks.json)。
 
 `priority` 只是 task-master 的字段。任务 1 标成 `high`，其余标成 `medium`。执行顺序以依赖为准，不表示其余任务可选。
 
@@ -44,7 +44,7 @@
 | 5 | CommandMap 命令映射 | 3 | done |
 | 6 | Settings 本地设置 | 1 | done |
 | 7 | EventTap 与模式、解析、命令接线 | 2、3、5 | done |
-| 8 | AXScanner 与自动 Insert | 1 | pending |
+| 8 | AXScanner 与自动 Insert | 1 | done |
 | 9 | Actuator 点击、滚动与快捷键执行 | 1 | done |
 | 10 | Overlay 与 f/F 提示 | 4、7、8、9 | pending |
 | 11 | 滚动、gi、放过下一键与应用快捷键 | 7、8、9 | pending |
