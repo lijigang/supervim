@@ -81,6 +81,9 @@ jobs:
 
       - name: Package DMG
         if: steps.skip.outputs.skip != 'true'
+        env:
+          SUPERVIM_SIGNING_P12_BASE64: ${{ secrets.SUPERVIM_SIGNING_P12_BASE64 }}
+          SUPERVIM_SIGNING_P12_PASSWORD: ${{ secrets.SUPERVIM_SIGNING_P12_PASSWORD }}
         run: scripts/package-dmg.sh build/Supervim.app "build/Supervim-${{ steps.version.outputs.version }}.dmg"
 
       - name: Verify DMG
@@ -91,15 +94,24 @@ jobs:
         if: steps.skip.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPERVIM_SIGNING_P12_BASE64: ${{ secrets.SUPERVIM_SIGNING_P12_BASE64 }}
+          SUPERVIM_SIGNING_P12_PASSWORD: ${{ secrets.SUPERVIM_SIGNING_P12_PASSWORD }}
         run: |
           set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
           DMG="build/Supervim-${VERSION}.dmg"
+          if [[ -n "${SUPERVIM_SIGNING_P12_BASE64:-}" && -n "${SUPERVIM_SIGNING_P12_PASSWORD:-}" ]]; then
+            SIGNING_NOTE="Signed with the project's stable self-signed certificate. Accessibility and Input Monitoring survive later upgrades. The app is not notarized, so Gatekeeper still warns the first time. See docs/stable-signing.md."
+          else
+            SIGNING_NOTE="Ad-hoc signed because the stable signing secret was not configured. Each build will ask for Accessibility and Input Monitoring again. See docs/stable-signing.md."
+          fi
           NOTES="$(cat <<EOF
-          Unsigned Supervim ${VERSION}.
+          Supervim ${VERSION}.
 
-          Drag Supervim.app to Applications. The app is not notarized. See the README for the first-launch steps.
+          Drag Supervim.app to Applications.
+
+          ${SIGNING_NOTE}
           EOF
           )"
           if gh release view "$TAG" >/dev/null 2>&1; then

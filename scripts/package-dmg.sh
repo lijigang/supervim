@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Package Supervim.app into an unsigned DMG with an Applications drop link.
-# codesign -s - is an ad-hoc signature so Apple Silicon can launch the bundle.
-# There is no paid signing identity and the image is not notarized.
+# Package Supervim.app into a DMG with an Applications drop link.
+# scripts/sign-app.sh signs the staged copy. With the stable certificate that
+# signature keeps Accessibility and Input Monitoring across upgrades. Without
+# the certificate it falls back to ad-hoc and says so. The image is not notarized.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,7 +25,7 @@ cleanup() {
 trap cleanup EXIT
 
 cp -R "$APP" "$STAGE/Supervim.app"
-codesign --force -s - "$STAGE/Supervim.app"
+"$ROOT/scripts/sign-app.sh" "$STAGE/Supervim.app"
 
 mkdir -p "$(dirname "$DMG")"
 rm -f "$DMG"

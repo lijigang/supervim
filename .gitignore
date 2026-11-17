@@ -7,4 +7,6 @@ __pycache__/
 .DS_Store
 DerivedData/
 *.xcuserstate
+*.p12
+supervim-signing/
 xcuserdata/

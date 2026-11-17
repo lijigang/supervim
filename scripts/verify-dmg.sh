@@ -38,3 +38,5 @@ if [[ ! -s "$MOUNT/.VolumeIcon.icns" ]]; then
   exit 1
 fi
 echo "DMG contains Supervim.app and an Applications link to /Applications"
+echo "Designated requirement:"
+codesign -d -r- "$MOUNT/Supervim.app"

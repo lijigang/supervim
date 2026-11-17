@@ -10,14 +10,14 @@ Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard c
 
 ## 安装 / Install
 
-发布物是未签名的 DMG，没有公证，也没有 Apple 开发者证书。磁盘映像里的应用做了 ad-hoc 签名（`codesign -s -`），只为了让 Apple Silicon 能够启动；Gatekeeper 仍把它当成不受信任的应用。
+发布物没有公证，也没有付费的 Apple Developer ID。配置好稳定的自签证书之后，每次升级都用同一张证书签名，辅助功能和输入监控可以保留；Gatekeeper 第一次打开时仍会警告。证书还没配进 GitHub 时，打包会退回 ad-hoc 签名（`codesign -s -`），每次安装都要重新授权。说明见 `docs/stable-signing.md`。
 
 1. 从 GitHub Release 下载 `Supervim-<版本>.dmg`。
 2. 打开磁盘映像。里面有 `Supervim.app` 和指向「应用程序」的 `Applications` 快捷方式。
 3. 把 `Supervim.app` 拖进 Applications。
 4. 从「应用程序」文件夹打开它。菜单栏里会出现状态，没有 Dock 图标。
 
-The release is an unsigned, unnotarized DMG. The app inside has an ad-hoc signature (`codesign -s -`) so Apple Silicon can launch it. Gatekeeper still treats it as untrusted.
+The release is not notarized and does not use a paid Developer ID. Once the stable self-signed certificate is configured, every upgrade is signed with that same certificate, so Accessibility and Input Monitoring can survive. Gatekeeper still warns the first time. If the certificate secret is missing, the build falls back to an ad-hoc signature (`codesign -s -`) and each install needs a new grant. See `docs/stable-signing.md`.
 
 1. Download `Supervim-<version>.dmg` from the GitHub Release.
 2. Open the image. It contains `Supervim.app` and an `Applications` shortcut.
@@ -220,7 +220,7 @@ Resources/AppIcon-1024.png    提交的 1024 图标
 Resources/AppIcon.icns        提交的应用图标，含 16–1024 与 @2x
 scripts/make-icon.sh          生成 iconset 和 icns；macOS 上优先用 iconutil
 scripts/assemble-app.sh       组装未签名 .app，放入 AppIcon.icns，release 时可写入版本号
-scripts/package-dmg.sh        用 create-dmg 打包，设置 --volicon，并做 ad-hoc codesign
+scripts/package-dmg.sh        用 create-dmg 打包。scripts/sign-app.sh 用稳定证书签名，没有证书时才 ad-hoc
 scripts/verify-dmg.sh         hdiutil 挂载并检查应用、Applications 链接、图标和卷图标
 Tests                         XCTest
 .github/workflows/ci.yml      macos-latest 上构建、测试、组装、DMG 冒烟
