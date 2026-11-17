@@ -24,4 +24,17 @@ case "$TARGET" in
     exit 1
     ;;
 esac
+if [[ ! -s "$MOUNT/Supervim.app/Contents/Resources/AppIcon.icns" ]]; then
+  echo "AppIcon.icns is missing from the bundled app" >&2
+  exit 1
+fi
+ICON="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$MOUNT/Supervim.app/Contents/Info.plist")"
+if [[ "$ICON" != "AppIcon" ]]; then
+  echo "CFBundleIconFile is ${ICON}, expected AppIcon" >&2
+  exit 1
+fi
+if [[ ! -s "$MOUNT/.VolumeIcon.icns" ]]; then
+  echo "volume icon .VolumeIcon.icns is missing from $DMG" >&2
+  exit 1
+fi
 echo "DMG contains Supervim.app and an Applications link to /Applications"

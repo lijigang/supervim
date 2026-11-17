@@ -8,6 +8,8 @@
 	<string>Supervim</string>
 	<key>CFBundleExecutable</key>
 	<string>Supervim</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.lijigang.supervim</string>
 	<key>CFBundleInfoDictionaryVersion</key>

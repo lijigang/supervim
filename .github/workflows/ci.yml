@@ -77,6 +77,9 @@ jobs:
       - name: Measure login item coverage
         run: scripts/login-item-coverage.sh
 
+      - name: Check committed app icon
+        run: scripts/make-icon.sh --check
+
       - name: Assemble unsigned menu-bar app
         run: scripts/assemble-app.sh
 
@@ -88,9 +91,11 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST")" = "13.0"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$PLIST")" = "APPL"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = "com.lijigang.supervim"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$PLIST")" = "AppIcon"
           test -n "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
           test -n "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
           test -x build/Supervim.app/Contents/MacOS/Supervim
+          test -s build/Supervim.app/Contents/Resources/AppIcon.icns
 
       - name: Install create-dmg
         run: brew install create-dmg

@@ -18,10 +18,11 @@ BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path | tail -n 1)"
 APP="$ROOT/build/Supervim.app"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Supervim" "$APP/Contents/MacOS/Supervim"
 chmod +x "$APP/Contents/MacOS/Supervim"
 cp "$ROOT/App/Supervim/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 VERSION="${2:-}"
 if [[ -n "$VERSION" ]]; then
