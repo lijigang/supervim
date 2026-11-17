@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Resources/AppIcon-1024.png" width="128" alt="Supervim">
+</p>
+
 # Supervim
 
 Supervim 是一个原生 macOS 菜单栏应用，目标是提供 Vimium 风格的系统级键盘控制。它使用 Swift 和 AppKit，不用 Electron，运行时不联网，也不记录击键。
@@ -161,6 +165,7 @@ These also differ from Vimium's defaults and are not marked on the sheet: there 
 - [任务 13 测试记录 / Task 13 test evidence](docs/task13-test-evidence.md)
 - [任务 14 测试记录 / Task 14 test evidence](docs/task14-test-evidence.md)
 - [任务 15 测试记录 / Task 15 test evidence](docs/task15-test-evidence.md)
+- [应用图标测试记录 / App icon test evidence](docs/app-icon-test-evidence.md)
 - [手工验收清单 / Manual acceptance](docs/manual-acceptance.md)
 
 规格文末单独列出了尚未能保证的平台行为。那些条目没有改写已批准的要求。手工验收清单把还没在真机上做过的项目收在一处。
@@ -196,6 +201,10 @@ scripts/package-dmg.sh build/Supervim.app build/Supervim-0.1.0.dmg
 scripts/verify-dmg.sh build/Supervim-0.1.0.dmg
 ```
 
+应用图标是一张 1024 画布上的浅灰圆角方，正中一块绿色的普通模式光标。`scripts/make-icon.sh` 从同一套几何写出 `Resources/AppIcon.svg`、各尺寸 PNG 和 `Resources/AppIcon.icns`。macOS 上如果有 `iconutil`，脚本会用它重新打包 icns。组装时 icns 放进 `Contents/Resources`，`CFBundleIconFile` 是 `AppIcon`。菜单栏状态仍然是文字，`LSUIElement` 仍是 true，所以没有 Dock 图标。DMG 用同一张 icns 做卷图标。
+
+The app icon is a light rounded square on a 1024 canvas, with a green Normal-mode cursor in the center. `scripts/make-icon.sh` writes `Resources/AppIcon.svg`, the PNG sizes, and `Resources/AppIcon.icns` from that geometry. On macOS it repacks the icns with `iconutil` when that tool exists. Assembly copies the icns into `Contents/Resources` and `CFBundleIconFile` is `AppIcon`. The menu bar stays text, and `LSUIElement` stays true, so there is still no Dock icon. The DMG uses the same icns as its volume icon.
+
 合并之后，在仓库上推送 tag `v0.1.0` 会触发 Release 工作流，生成 DMG 并创建 GitHub Release。也可以在 Actions 里手动运行 Release，版本号填 `0.1.0`。不要为了同一次发布既推 tag 又手动跑：手动运行会创建 tag，随后的 tag 工作流如果发现 Release 里已经有同名 DMG，就跳过重建。
 
 ## 工程结构 / Layout
@@ -205,10 +214,14 @@ Package.swift                 SwiftPM 描述，macOS 13+，Swift 6
 Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings、EventInterpreter、CommandFollowThrough、MenuBarController、HintSession、HelpSheet、PermissionGuide、LoginItemRegistration
 Sources/SupervimSystem        系统适配。含菜单栏预检、UserDefaults、EventTap、AXScanner、Actuator、标签浮层、帮助浮层、滚动目录、命令会话、权限探测，以及 macOS 上的主应用登录项。另有 CGEvent 合成、不激活面板和输入框聚焦
 Sources/Supervim              菜单栏应用。启动时按偏好登记登录项；缺权限时显示引导；两项都授予后启动 AXScanner 并安装事件钩子
-App/Supervim/Info.plist       应用包清单，含 LSUIElement、com.lijigang.supervim 和版本号
-scripts/assemble-app.sh       组装未签名 .app，release 时可写入版本号
-scripts/package-dmg.sh        用 create-dmg 打包，并做 ad-hoc codesign
-scripts/verify-dmg.sh         hdiutil 挂载并检查 Supervim.app 与 Applications 链接
+App/Supervim/Info.plist       应用包清单，含 LSUIElement、CFBundleIconFile、com.lijigang.supervim 和版本号
+Resources/AppIcon.svg         图标源图。1024 透明画布、824 连续曲率圆角方、绿色光标块
+Resources/AppIcon-1024.png    提交的 1024 图标
+Resources/AppIcon.icns        提交的应用图标，含 16–1024 与 @2x
+scripts/make-icon.sh          生成 iconset 和 icns；macOS 上优先用 iconutil
+scripts/assemble-app.sh       组装未签名 .app，放入 AppIcon.icns，release 时可写入版本号
+scripts/package-dmg.sh        用 create-dmg 打包，设置 --volicon，并做 ad-hoc codesign
+scripts/verify-dmg.sh         hdiutil 挂载并检查应用、Applications 链接、图标和卷图标
 Tests                         XCTest
 .github/workflows/ci.yml      macos-latest 上构建、测试、组装、DMG 冒烟
 .github/workflows/release.yml 推送 v* tag 或手动输入版本号后发布 DMG
@@ -220,7 +233,7 @@ docs                          已批准的中文宪法、规格、计划和任�
 
 ## CI
 
-推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、十四个覆盖率脚本和 `scripts/assemble-app.sh`，检查组装结果里的 `LSUIElement`、bundle id 和版本号，再用 `create-dmg` 打包、`hdiutil` 挂载校验，并把 DMG 作为 artifact 上传。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift`、`EventTap.swift`、`Actuator.swift`、`AXScanner.swift`、`MenuBarController.swift`、`HintSession.swift`、`HintOverlay.swift`、`CommandFollowThrough.swift`、`NormalCommandSession.swift`、`ScrollAreaCatalog.swift`、`SupervimRuntime.swift`、`PermissionGuide.swift`、`HelpSheet.swift`、`HelpOverlay.swift` 和 `LoginItemRegistration.swift` 的行覆盖率不低于 90%。`AXApplicationReader.swift`、`CGEventActuator.swift`、`HintOverlayWindow.swift`、`AXInputFocuser.swift`、`PermissionAccess.swift`、`MacHookAssembly.swift`、`MainAppLoginItemController.swift` 和菜单与引导的 AppKit 胶水只在 macOS 上编译，不计入这个门槛。
+推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、十四个覆盖率脚本和 `scripts/make-icon.sh --check`，再跑 `scripts/assemble-app.sh`，检查组装结果里的 `LSUIElement`、bundle id、版本号、`CFBundleIconFile=AppIcon` 和 `Contents/Resources/AppIcon.icns`，然后用 `create-dmg` 打包、`hdiutil` 挂载校验，并把 DMG 作为 artifact 上传。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift`、`EventTap.swift`、`Actuator.swift`、`AXScanner.swift`、`MenuBarController.swift`、`HintSession.swift`、`HintOverlay.swift`、`CommandFollowThrough.swift`、`NormalCommandSession.swift`、`ScrollAreaCatalog.swift`、`SupervimRuntime.swift`、`PermissionGuide.swift`、`HelpSheet.swift`、`HelpOverlay.swift` 和 `LoginItemRegistration.swift` 的行覆盖率不低于 90%。`AXApplicationReader.swift`、`CGEventActuator.swift`、`HintOverlayWindow.swift`、`AXInputFocuser.swift`、`PermissionAccess.swift`、`MacHookAssembly.swift`、`MainAppLoginItemController.swift` 和菜单与引导的 AppKit 胶水只在 macOS 上编译，不计入这个门槛。
 
 ## 工作流工具 / Workflow tools
 

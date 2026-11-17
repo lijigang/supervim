@@ -31,6 +31,7 @@ rm -f "$DMG"
 
 create-dmg \
   --volname "Supervim" \
+  --volicon "$ROOT/Resources/AppIcon.icns" \
   --window-pos 200 120 \
   --window-size 640 400 \
   --icon-size 128 \

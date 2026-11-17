@@ -1,5 +1,8 @@
 .build/
 build/
+Resources/AppIcon.iconset/
+__pycache__/
+*.pyc
 .swiftpm/
 .DS_Store
 DerivedData/
