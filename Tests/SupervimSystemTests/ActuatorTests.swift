@@ -854,6 +854,104 @@ final class ActuatorTests: XCTestCase {
         }
     }
 
+    func testContentScrollSkipsTheInputAndAimsTheWheelAtTheChosenCenter() {
+        let input = ActuatorRect(x: 0, y: 500, width: 200, height: 40)
+        let composer = contentArea(
+            "composer",
+            frame: input,
+            depth: 3,
+            travelUp: 10,
+            role: "AXScrollArea",
+            textInput: true
+        )
+        let history = contentArea(
+            "history",
+            frame: ActuatorRect(x: 0, y: 0, width: 200, height: 480),
+            depth: 1,
+            travelUp: 80,
+            role: "AXScrollArea"
+        )
+        let sidebar = contentArea(
+            "sidebar",
+            frame: ActuatorRect(x: 0, y: 0, width: 40, height: 480),
+            depth: 2,
+            travelUp: 20,
+            travelDown: 20,
+            travelLeft: 5,
+            travelRight: 5,
+            role: "AXWebArea"
+        )
+        let stuck = contentArea(
+            "stuck",
+            frame: ActuatorRect(x: 0, y: 0, width: 900, height: 900),
+            travelUp: 0,
+            role: "AXWebArea"
+        )
+        let overHistory = ContentScroll.aim(
+            areas: [composer, history, sidebar],
+            pointer: actuatorPoint(20, 20),
+            excludedFrame: input,
+            direction: .up
+        )
+        XCTAssertEqual(overHistory?.area.identifier, "sidebar")
+        XCTAssertEqual(overHistory?.location, actuatorPoint(20, 240))
+
+        let overComposer = ContentScroll.aim(
+            areas: [composer, history],
+            pointer: actuatorPoint(20, 520),
+            excludedFrame: input,
+            direction: .up
+        )
+        XCTAssertEqual(overComposer?.area.identifier, "history")
+        XCTAssertEqual(overComposer?.location, actuatorPoint(100, 240))
+
+        let parent = contentArea(
+            "parent",
+            frame: ActuatorRect(x: 0, y: 0, width: 400, height: 600),
+            depth: 1,
+            travelDown: 30,
+            role: "AXWebArea"
+        )
+        let nested = ContentScroll.aim(
+            areas: [composer, parent],
+            pointer: actuatorPoint(20, 520),
+            excludedFrame: input,
+            direction: .down
+        )
+        XCTAssertEqual(nested?.area.identifier, "parent")
+
+        XCTAssertNil(
+            ContentScroll.aim(
+                areas: [composer, stuck],
+                pointer: nil,
+                excludedFrame: input,
+                direction: .up
+            )
+        )
+        let sideways = ContentScroll.aim(
+            areas: [sidebar],
+            pointer: nil,
+            excludedFrame: nil,
+            direction: .left
+        )
+        XCTAssertEqual(sideways?.area.identifier, "sidebar")
+        XCTAssertEqual(
+            ContentScroll.aim(
+                areas: [sidebar],
+                pointer: actuatorPoint(1, 1),
+                excludedFrame: nil,
+                direction: .right
+            )?.area.identifier,
+            "sidebar"
+        )
+        let tieA = contentArea("b", frame: ActuatorRect(x: 0, y: 0, width: 10, height: 10), travelUp: 1, role: "AXGroup")
+        let tieB = contentArea("a", frame: ActuatorRect(x: 30, y: 0, width: 10, height: 10), travelUp: 1, role: "AXGroup")
+        XCTAssertEqual(
+            ContentScroll.aim(areas: [tieA, tieB], pointer: nil, excludedFrame: nil, direction: .up)?.area.identifier,
+            "a"
+        )
+    }
+
     func testFrameContainsTheInclusiveBoundary() {
         let frame = ActuatorRect(x: 0, y: 0, width: 10, height: 10)
         XCTAssertTrue(frame.contains(actuatorPoint(0, 0)))
@@ -876,6 +974,31 @@ private let promisedBrowsers = [
 
 private let actuatorSource = repoRoot().appendingPathComponent("Sources/SupervimSystem/Actuator.swift")
 private let coreGraphicsSource = repoRoot().appendingPathComponent("Sources/SupervimSystem/CGEventActuator.swift")
+
+private func contentArea(
+    _ identifier: String,
+    frame: ActuatorRect,
+    depth: Int = 1,
+    travelUp: Double = 0,
+    travelDown: Double = 0,
+    travelLeft: Double = 0,
+    travelRight: Double = 0,
+    role: String? = nil,
+    textInput: Bool = false
+) -> ScrollArea {
+    var area = scrollRegion(
+        identifier,
+        frame: frame,
+        depth: depth,
+        travelLeft: travelLeft,
+        travelDown: travelDown,
+        travelUp: travelUp,
+        travelRight: travelRight
+    )
+    area.role = role
+    area.isTextInput = textInput
+    return area
+}
 
 private func actuatorPoint(_ x: Double, _ y: Double) -> ActuatorPoint {
     ActuatorPoint(x: x, y: y)

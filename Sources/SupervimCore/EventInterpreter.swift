@@ -23,15 +23,56 @@ public enum OverlayUpdate: Equatable, Sendable {
     case showHelp
 }
 
+/// Screen rectangle copied with a focus element.
+/// The axes stay in the coordinate space the reader used.
+public struct FocusFrame: Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    /// Inclusive on every edge. A non-positive or non-finite size contains nothing.
+    public func contains(x: Double, y: Double) -> Bool {
+        guard width > 0, height > 0, x.isFinite, y.isFinite, self.x.isFinite, self.y.isFinite else {
+            return false
+        }
+        return x >= self.x && x <= self.x + width && y >= self.y && y <= self.y + height
+    }
+}
+
 /// Focus and frontmost app, already read by something outside the event hook.
 /// An empty bundle identifier is treated as excluded by Settings.
+/// `elementIdentity` is the accessibility element's identity. Nil means the reader
+/// could not name the element. The same identity after Esc is not a new field.
 public struct CachedFocus: Equatable, Sendable {
     public var editability: FocusEditability
     public var bundleIdentifier: String
+    public var elementIdentity: String?
+    public var frame: FocusFrame?
+    public var role: String?
+    public var subrole: String?
 
-    public init(editability: FocusEditability, bundleIdentifier: String) {
+    public init(
+        editability: FocusEditability,
+        bundleIdentifier: String,
+        elementIdentity: String? = nil,
+        frame: FocusFrame? = nil,
+        role: String? = nil,
+        subrole: String? = nil
+    ) {
         self.editability = editability
         self.bundleIdentifier = bundleIdentifier
+        self.elementIdentity = elementIdentity
+        self.frame = frame
+        self.role = role
+        self.subrole = subrole
     }
 
     public static let unknown = CachedFocus(editability: .unknown, bundleIdentifier: "")
@@ -80,6 +121,10 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     private var machine = ModeMachine()
     private var parser: KeyParser<Clock>
     private let commands = CommandMap()
+    /// Set when Esc leaves Insert on a named element. The same element does not
+    /// auto-enter Insert again until the identity changes, `i` is pressed, or
+    /// the pointer clicks inside that element's frame.
+    private var heldNormalIdentity: String?
 
     public init(settings: Settings = .defaults, clock: Clock, cache: CachedFocus = .unknown) {
         self.clock = clock
@@ -102,67 +147,72 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     /// Menu pause. This is not a key, so the decision passes the event through.
     /// A pending prefix is dropped and is not replayed after resume.
     public func pause() -> EventDecision {
+        let previous = machine.mode
         _ = parser.suspendParsing()
         let step = machine.handle(.pause)
         settings.isPaused = machine.mode == .paused
-        return decided(
+        let decision = decided(
             delivery: .passThrough,
             actions: [],
             overlay: overlay(from: step.effects),
             effects: step.effects
         )
+        trace("pause", from: previous)
+        return decision
     }
 
     /// Menu resume. A resume while the machine is not paused leaves the mode alone.
     public func resume() -> EventDecision {
+        let previous = machine.mode
         let step = machine.handle(.resume)
         settings.isPaused = machine.mode == .paused
-        return decided(
+        let decision = decided(
             delivery: .passThrough,
             actions: [],
             overlay: overlay(from: step.effects),
             effects: step.effects
         )
+        trace("resume", from: previous)
+        return decision
     }
 
     public func handleKeyDown(_ event: KeyEvent, cache: CachedFocus) -> EventDecision {
+        let previous = machine.mode
         let transition = apply(cache)
+        let decision: EventDecision
         if shouldPause(event) {
             _ = parser.suspendParsing()
             let step = machine.handle(.togglePause)
             settings.isPaused = machine.mode == .paused
-            return decided(
+            decision = decided(
                 delivery: .swallow,
                 actions: [],
                 overlay: overlay(from: step.effects) ?? transition.overlay,
                 effects: transition.effects + step.effects
             )
-        }
-        if !interpretsCommands {
+        } else if !interpretsCommands {
             _ = parser.suspendParsing()
-            return decisionWithoutParser(event, transition: transition)
+            decision = decisionWithoutParser(event, transition: transition)
+        } else {
+            decision = decisionFromParser(event, transition: transition)
         }
-        return decisionFromParser(event, transition: transition)
+        trace(triggerText(event), from: previous)
+        return decision
     }
 
     /// Applies a snapshot between keys. Does not scan and does not swallow a key.
     @discardableResult
     public func updateCache(_ cache: CachedFocus) -> EventDecision {
-        let transition = apply(cache)
-        if !interpretsCommands {
-            _ = parser.suspendParsing()
-        }
-        return decided(
-            delivery: .passThrough,
-            actions: [],
-            overlay: transition.overlay,
-            effects: transition.effects
-        )
+        let previous = machine.mode
+        let decision = applyCache(cache)
+        trace("focus", from: previous)
+        return decision
     }
 
     /// Leaves Hint after a label was clicked or the overlay gave up.
     /// Does nothing to a prefix or to another mode. The key hook does not call this.
     public func endHint(_ reason: HintEnd) -> EventDecision {
+        let previous = machine.mode
         let input: ModeInput
         switch reason {
         case .completed:
@@ -174,12 +224,38 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
         if step.effects.contains(.endHint) {
             _ = parser.suspendParsing()
         }
-        return decided(
+        let decision = decided(
             delivery: .passThrough,
             actions: [],
             overlay: overlay(from: step.effects),
             effects: step.effects
         )
+        trace("hint-end", from: previous)
+        return decision
+    }
+
+    /// A click inside the input that Esc is holding re-enters Insert.
+    /// A click anywhere else leaves Normal alone and does not swallow the click.
+    public func acceptPointerClick(x: Double, y: Double) -> EventDecision {
+        let previous = machine.mode
+        guard let frame = cache.frame,
+              heldNormalIdentity != nil,
+              cache.elementIdentity == heldNormalIdentity,
+              cache.editability == .editable,
+              frame.contains(x: x, y: y)
+        else {
+            trace("click", from: previous)
+            return EventDecision(delivery: .passThrough, mode: machine.mode)
+        }
+        heldNormalIdentity = nil
+        let decision = applyCache(cache)
+        trace("click", from: previous)
+        return decision
+    }
+
+    /// `gi` drops the Esc hold so the following focus read can enter Insert.
+    public func releaseHeldInput() {
+        heldNormalIdentity = nil
     }
 
     public func replaceSettings(_ settings: Settings) {
@@ -196,7 +272,7 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
 
     private var interpretsCommands: Bool {
         machine.mode == .normal
-            && cache.editability == .notEditable
+            && editabilitySeenByMachine(cache) == .notEditable
             && !settings.isExcluded(bundleIdentifier: cache.bundleIdentifier)
     }
 
@@ -210,15 +286,54 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
         return settings.pauseShortcut.matches(event)
     }
 
+    private func applyCache(_ next: CachedFocus) -> EventDecision {
+        let transition = apply(next)
+        if !interpretsCommands {
+            _ = parser.suspendParsing()
+        }
+        return decided(
+            delivery: .passThrough,
+            actions: [],
+            overlay: transition.overlay,
+            effects: transition.effects
+        )
+    }
+
     private func apply(_ next: CachedFocus) -> Transition {
+        noteIdentityChange(next)
         let foreground: ForegroundApp = settings.isExcluded(bundleIdentifier: next.bundleIdentifier)
             ? .excluded
             : .controlled
         let foregroundStep = machine.handle(.foreground(foreground))
-        let focusStep = machine.handle(.focus(next.editability))
+        let focusStep = machine.handle(.focus(editabilitySeenByMachine(next)))
         cache = next
         let effects = foregroundStep.effects + focusStep.effects
         return Transition(effects: effects, overlay: overlay(from: effects))
+    }
+
+    /// A different named element clears the Esc hold. A missing name does not:
+    /// a failed or partial read is not "the caret entered a new field".
+    private func noteIdentityChange(_ next: CachedFocus) {
+        guard let identity = next.elementIdentity else {
+            return
+        }
+        if heldNormalIdentity != identity {
+            heldNormalIdentity = nil
+        }
+    }
+
+    /// While Esc is holding an element, that same element (or an unnamed read)
+    /// is shown to the mode machine as not editable, so Normal commands keep working.
+    /// A cache with no identity and no hold keeps the previous rule.
+    private func editabilitySeenByMachine(_ next: CachedFocus) -> FocusEditability {
+        guard let held = heldNormalIdentity else {
+            return next.editability
+        }
+        let sameOrUnnamed = next.elementIdentity == held || next.elementIdentity == nil
+        if sameOrUnnamed, next.editability != .notEditable {
+            return .notEditable
+        }
+        return next.editability
     }
 
     private func decisionWithoutParser(_ event: KeyEvent, transition: Transition) -> EventDecision {
@@ -302,12 +417,37 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
         overlay: OverlayUpdate?,
         effects: [ModeEffect]
     ) -> EventDecision {
-        EventDecision(
+        if effects.contains(.blurFocus), let identity = cache.elementIdentity {
+            heldNormalIdentity = identity
+        }
+        return EventDecision(
             delivery: delivery,
             mode: machine.mode,
             actions: actions,
             overlay: overlay,
             modeEffects: effects
+        )
+    }
+
+    private func triggerText(_ event: KeyEvent) -> String {
+        switch event.identity {
+        case .character(let character):
+            return String(character)
+        case .escape:
+            return "escape"
+        case .unnamed:
+            return "unnamed"
+        }
+    }
+
+    private func trace(_ trigger: String, from previous: SupervimMode) {
+        ModeTrace.note(
+            from: previous,
+            to: machine.mode,
+            role: cache.role,
+            subrole: cache.subrole,
+            trigger: trigger,
+            identity: cache.elementIdentity
         )
     }
 

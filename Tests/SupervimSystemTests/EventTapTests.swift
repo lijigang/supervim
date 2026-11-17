@@ -306,6 +306,44 @@ final class EventTapTests: XCTestCase {
         }
     }
 
+    func testPointerPressIsPassedThroughAndCanReenterInsert() {
+        let frame = FocusFrame(x: 0, y: 500, width: 100, height: 40)
+        let composer = CachedFocus(
+            editability: .editable,
+            bundleIdentifier: "com.tencent.xinWeChat",
+            elementIdentity: "composer",
+            frame: frame,
+            role: "AXTextArea"
+        )
+        let fixture = makeWiring(cache: composer)
+        _ = fixture.wiring.handleKeyDown(KeyEvent(identity: .escape))
+        let outside = fixture.wiring.handleSystemRecord(
+            SystemKeyRecord(
+                kind: .other,
+                keyCode: 0,
+                modifierFlags: 0,
+                unicode: "",
+                pointerX: 1,
+                pointerY: 1
+            )
+        )
+        XCTAssertEqual(outside.delivery, .passThrough)
+        XCTAssertEqual(outside.decision?.mode, .normal)
+        let inside = fixture.wiring.handleSystemRecord(
+            SystemKeyRecord(
+                kind: .other,
+                keyCode: 0,
+                modifierFlags: 0,
+                unicode: "",
+                pointerX: 10,
+                pointerY: 510
+            )
+        )
+        XCTAssertEqual(inside.delivery, .passThrough)
+        XCTAssertEqual(inside.decision?.mode, .insert)
+        XCTAssertEqual(fixture.scanner.scans, 0)
+    }
+
     func testMacOSTapSourceInstallsATapAndDoesNotScanOrAct() throws {
         let url = repoRoot().appendingPathComponent("Sources/SupervimSystem/CGEventTapSession.swift")
         let text = try String(contentsOf: url, encoding: .utf8)

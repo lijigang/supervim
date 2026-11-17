@@ -7,6 +7,103 @@ import XCTest
 /// read is editable. Ctrl+] passes the next key through without posting it.
 /// The key path reads a snapshot. It does not walk the accessibility tree.
 final class NormalCommandSessionTests: XCTestCase {
+    /// After Esc the caret is still in the composer. `k` wheels the chat
+    /// history, at that area's center, and does not wheel the composer.
+    func testNormalKWheelsTheChatHistoryInsteadOfTheComposer() {
+        let composerFrame = ActuatorRect(x: 0, y: 520, width: 800, height: 80)
+        let chatFrame = ActuatorRect(x: 0, y: 0, width: 800, height: 500)
+        let composer = sessionArea(
+            "composer",
+            frame: composerFrame,
+            depth: 4,
+            travelUp: 40,
+            travelDown: 40,
+            role: "AXScrollArea",
+            textInput: true
+        )
+        let chat = sessionArea(
+            "history",
+            frame: chatFrame,
+            depth: 1,
+            travelUp: 900,
+            travelDown: 40,
+            role: "AXScrollArea"
+        )
+        let fixture = composerSession(
+            areas: [composer, chat],
+            pointer: ActuatorPoint(x: 400, y: 560)
+        )
+        _ = fixture.session.handleKeyDown(KeyEvent(identity: .escape))
+        let performance = fixture.session.handleKeyDown(KeyEvent("k"))
+        XCTAssertEqual(performance.mode, .normal)
+        XCTAssertEqual(performance.delivery, .swallow)
+        guard case .pointerScroll(let target, _, _, let location, let horizontal, let vertical) =
+            fixture.poster.effects.first
+        else {
+            return XCTFail("expected a wheel event, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(target, "history")
+        XCTAssertEqual(location, ActuatorPoint(x: 400, y: 250))
+        XCTAssertEqual(horizontal, 0)
+        XCTAssertGreaterThan(vertical, 0)
+    }
+
+    /// `k` in Normal must not reach the composer as a typed character.
+    func testNormalKIsNotDeliveredToTheComposer() {
+        let scrolling = composerSession(
+            areas: [
+                sessionArea(
+                    "history",
+                    frame: ActuatorRect(x: 0, y: 0, width: 800, height: 500),
+                    travelUp: 400,
+                    role: "AXWebArea"
+                ),
+            ],
+            pointer: ActuatorPoint(x: 20, y: 20)
+        )
+        _ = scrolling.session.handleKeyDown(KeyEvent(identity: .escape))
+        let moved = scrolling.session.handleSystemRecord(sampleKey(keyCode: 0x28, unicode: "k"))
+        XCTAssertEqual(moved.mode, .normal)
+        XCTAssertEqual(moved.delivery, .swallow)
+        XCTAssertFalse(scrolling.poster.effects.isEmpty)
+
+        let stuck = composerSession(areas: [], ready: true, pointer: ActuatorPoint(x: 400, y: 560))
+        _ = stuck.session.handleKeyDown(KeyEvent(identity: .escape))
+        let held = stuck.session.handleSystemRecord(sampleKey(keyCode: 0x28, unicode: "k"))
+        XCTAssertEqual(held.mode, .normal)
+        XCTAssertEqual(held.delivery, .swallow)
+        XCTAssertTrue(stuck.poster.effects.isEmpty)
+    }
+
+    func testHeldNormalKWheelsABarlessWebAreaFromTheStructuralList() {
+        let fixture = composerSession(areas: [], pointer: ActuatorPoint(x: 12, y: 16))
+        let page = sessionArea(
+            "page",
+            frame: ActuatorRect(x: 0, y: 0, width: 400, height: 300),
+            travelUp: 1,
+            role: "AXWebArea"
+        )
+        fixture.session.replaceSnapshot(
+            CommandSnapshot(
+                scrollAreas: [],
+                scrollCatalogReady: true,
+                firstInput: .none,
+                focusPoint: nil,
+                structuralAreas: [page]
+            )
+        )
+        _ = fixture.session.handleKeyDown(KeyEvent(identity: .escape))
+        let performance = fixture.session.handleKeyDown(KeyEvent("k"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(performance.mode, .normal)
+        guard case .pointerScroll(let target, _, _, let location, _, let vertical) = fixture.poster.effects.first else {
+            return XCTFail("expected a wheel event, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(target, "page")
+        XCTAssertEqual(location, ActuatorPoint(x: 200, y: 150))
+        XCTAssertGreaterThan(vertical, 0)
+    }
+
     func testScrollKeysPostTheSameEffectAsTheActuator() {
         let keys: [(Character, KeyCommand)] = [
             ("j", .scrollDown),
@@ -500,6 +597,25 @@ final class ScrollAreaCatalogTests: XCTestCase {
         XCTAssertEqual(area.identifier, "3")
         XCTAssertEqual(area.depth, 1)
         XCTAssertEqual(area.travelDown, 1)
+        XCTAssertEqual(catalog.structural.map(\.identifier), ["0"])
+        XCTAssertEqual(catalog.structural.map(\.role), ["AXScrollArea"])
+    }
+
+    func testWebAreaWithoutAScrollBarIsAStructuralWheelTarget() {
+        let window = axNode(
+            role: "AXWindow",
+            frame: ElementFrame(x: 0, y: 0, width: 400, height: 300),
+            children: [
+                axNode(role: "AXWebArea", frame: ElementFrame(x: 0, y: 40, width: 400, height: 260)),
+                axNode(role: "AXTextArea", frame: ElementFrame(x: 0, y: 0, width: 10, height: 10)),
+            ]
+        )
+        let catalog = ScrollAreaCatalog.collect(window: window, pointer: nil, focus: nil)
+        XCTAssertTrue(catalog.areas.isEmpty)
+        XCTAssertEqual(catalog.structural.map(\.identifier), ["0"])
+        XCTAssertEqual(catalog.structural.first?.role, "AXWebArea")
+        XCTAssertEqual(catalog.structural.first?.travelUp, 1)
+        XCTAssertEqual(catalog.structural.first?.frame, ActuatorRect(x: 0, y: 40, width: 400, height: 260))
     }
 
     func testNestedAreasKeepPathIdentifiers() {
@@ -637,6 +753,60 @@ final class ScrollAreaCatalogTests: XCTestCase {
 }
 
 private let pagePointer = ActuatorPoint(x: 20, y: 30)
+
+private func sessionArea(
+    _ identifier: String,
+    frame: ActuatorRect,
+    depth: Int = 1,
+    travelUp: Double = 0,
+    travelDown: Double = 0,
+    role: String? = nil,
+    textInput: Bool = false
+) -> ScrollArea {
+    ScrollArea(
+        identifier: identifier,
+        frame: frame,
+        depth: depth,
+        containsPointer: false,
+        isFocusContainer: false,
+        visibleWidth: frame.width,
+        visibleHeight: frame.height,
+        travelLeft: 0,
+        travelDown: travelDown,
+        travelUp: travelUp,
+        travelRight: 0,
+        contentWidth: nil,
+        contentHeight: frame.height + travelUp + travelDown,
+        role: role,
+        isTextInput: textInput
+    )
+}
+
+private func composerFocus() -> CachedFocus {
+    CachedFocus(
+        editability: .editable,
+        bundleIdentifier: "com.tencent.xinWeChat",
+        elementIdentity: "composer",
+        frame: FocusFrame(x: 0, y: 520, width: 800, height: 80),
+        role: "AXTextArea"
+    )
+}
+
+private func composerSession(
+    areas: [ScrollArea],
+    ready: Bool = true,
+    pointer: ActuatorPoint?
+) -> SessionFixture {
+    let fixture = makeSession(
+        bundle: "com.tencent.xinWeChat",
+        areas: areas,
+        ready: ready,
+        focus: nil,
+        pointer: pointer
+    )
+    fixture.pipeline.cache.replace(composerFocus())
+    return fixture
+}
 
 private func pageArea() -> ScrollArea {
     ScrollArea(

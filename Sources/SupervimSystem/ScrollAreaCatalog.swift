@@ -24,10 +24,15 @@ public struct ScrollBarReading: Equatable, Sendable {
 public struct ScrollCatalog: Equatable, Sendable {
     public var areas: [ScrollArea]
     public var ready: Bool
+    /// `AXScrollArea` / `AXWebArea` frames, including ones with no scroll bar.
+    /// Electron history lists often have no bar. The key path uses these only
+    /// while Normal is held over a text input. They are not `areas`.
+    public var structural: [ScrollArea]
 
-    public init(areas: [ScrollArea], ready: Bool) {
+    public init(areas: [ScrollArea], ready: Bool, structural: [ScrollArea] = []) {
         self.areas = areas
         self.ready = ready
+        self.structural = structural
     }
 }
 
@@ -59,15 +64,19 @@ public enum ScrollAreaCatalog {
         limits: TreeWalkLimits = .standard
     ) -> ScrollCatalog {
         var areas: [ScrollArea] = []
+        var structural: [ScrollArea] = []
         let truncated = walk(window, limits: limits) { node, path, isRoot in
             if let area = makeArea(node, path: path, isRoot: isRoot, pointer: pointer, focus: focus) {
                 areas.append(area)
             }
+            if let wheel = structuralArea(node, path: path, isRoot: isRoot) {
+                structural.append(wheel)
+            }
         }
         if truncated {
-            return ScrollCatalog(areas: [], ready: false)
+            return ScrollCatalog(areas: [], ready: false, structural: [])
         }
-        return ScrollCatalog(areas: areas, ready: true)
+        return ScrollCatalog(areas: areas, ready: true, structural: structural)
     }
 
     /// Recomputes pointer and focus flags from frames. Does not walk a tree.
@@ -131,7 +140,42 @@ public enum ScrollAreaCatalog {
             travelUp: vertical?.towardMinimum ?? 0,
             travelRight: horizontal?.towardMaximum ?? 0,
             contentWidth: horizontal?.content,
-            contentHeight: vertical?.content
+            contentHeight: vertical?.content,
+            role: node.role,
+            isTextInput: false
+        )
+    }
+
+    /// A web or scroll area with a positive frame can take a wheel event even
+    /// when it has no accessibility scroll bar. Travel is 1 so the aim rule
+    /// does not treat the unknown edge as "already there".
+    private static func structuralArea(
+        _ node: AccessibilityElement,
+        path: [Int],
+        isRoot: Bool
+    ) -> ScrollArea? {
+        guard node.role == "AXScrollArea" || node.role == "AXWebArea" else {
+            return nil
+        }
+        guard let rect = usableRect(node.frame) else {
+            return nil
+        }
+        return ScrollArea(
+            identifier: isRoot ? "root" : path.map(String.init).joined(separator: "/"),
+            frame: rect,
+            depth: isRoot ? 0 : path.count,
+            containsPointer: false,
+            isFocusContainer: false,
+            visibleWidth: rect.width,
+            visibleHeight: rect.height,
+            travelLeft: 1,
+            travelDown: 1,
+            travelUp: 1,
+            travelRight: 1,
+            contentWidth: nil,
+            contentHeight: nil,
+            role: node.role,
+            isTextInput: false
         )
     }
 
@@ -256,17 +300,20 @@ public struct CommandSnapshot: Equatable, Sendable {
     public var scrollCatalogReady: Bool
     public var firstInput: EditableInputQuery
     public var focusPoint: ActuatorPoint?
+    public var structuralAreas: [ScrollArea]
 
     public init(
         scrollAreas: [ScrollArea],
         scrollCatalogReady: Bool,
         firstInput: EditableInputQuery,
-        focusPoint: ActuatorPoint?
+        focusPoint: ActuatorPoint?,
+        structuralAreas: [ScrollArea] = []
     ) {
         self.scrollAreas = scrollAreas
         self.scrollCatalogReady = scrollCatalogReady
         self.firstInput = firstInput
         self.focusPoint = focusPoint
+        self.structuralAreas = structuralAreas
     }
 
     public static let unavailable = CommandSnapshot(
@@ -293,7 +340,8 @@ public enum CommandSnapshotBuilder {
                 scrollAreas: [],
                 scrollCatalogReady: false,
                 firstInput: firstInput,
-                focusPoint: focus
+                focusPoint: focus,
+                structuralAreas: []
             )
         case .value(let element):
             let catalog = ScrollAreaCatalog.collect(
@@ -306,7 +354,8 @@ public enum CommandSnapshotBuilder {
                 scrollAreas: catalog.areas,
                 scrollCatalogReady: catalog.ready,
                 firstInput: firstInput,
-                focusPoint: focus
+                focusPoint: focus,
+                structuralAreas: catalog.ready ? catalog.structural : []
             )
         }
     }

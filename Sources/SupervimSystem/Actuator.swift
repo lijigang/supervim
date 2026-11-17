@@ -54,6 +54,10 @@ public struct ScrollArea: Equatable, Sendable {
     public var travelRight: Double
     public var contentWidth: Double?
     public var contentHeight: Double?
+    /// Accessibility role copied with the area. Nil for callers that do not know it.
+    public var role: String?
+    /// The focused text input. Content scroll does not use it as the wheel target.
+    public var isTextInput: Bool
 
     public init(
         identifier: String,
@@ -68,7 +72,9 @@ public struct ScrollArea: Equatable, Sendable {
         travelUp: Double,
         travelRight: Double,
         contentWidth: Double?,
-        contentHeight: Double?
+        contentHeight: Double?,
+        role: String? = nil,
+        isTextInput: Bool = false
     ) {
         self.identifier = identifier
         self.frame = frame
@@ -83,6 +89,8 @@ public struct ScrollArea: Equatable, Sendable {
         self.travelRight = travelRight
         self.contentWidth = contentWidth
         self.contentHeight = contentHeight
+        self.role = role
+        self.isTextInput = isTextInput
     }
 }
 
@@ -422,6 +430,132 @@ public enum ScrollHitRule {
             return (0, magnitude)
         case .down:
             return (0, -magnitude)
+        }
+    }
+}
+
+/// Where Normal `j` / `k` should wheel while the caret is still in a text input.
+///
+/// The focused input is not a target. Prefer an `AXScrollArea` or `AXWebArea`
+/// under the pointer. Otherwise use the largest remaining area that can move.
+/// The wheel location is that area's center, so the event hits the history
+/// instead of the composer under the pointer.
+public struct ContentScrollAim: Equatable, Sendable {
+    public var area: ScrollArea
+    public var location: ActuatorPoint
+
+    public init(area: ScrollArea, location: ActuatorPoint) {
+        self.area = area
+        self.location = location
+    }
+}
+
+public enum ContentScroll {
+    public static func aim(
+        areas: [ScrollArea],
+        pointer: ActuatorPoint?,
+        excludedFrame: ActuatorRect?,
+        direction: ScrollDirection
+    ) -> ContentScrollAim? {
+        let candidates = areas.filter { area in
+            travel(area, direction) > 0 && !isFocusedInput(area, excludedFrame)
+        }
+        let hovered = candidates.filter { area in
+            isContentRole(area.role) && contains(area.frame, pointer)
+        }
+        guard let chosen = bestHovered(hovered) ?? largest(candidates) else {
+            return nil
+        }
+        return ContentScrollAim(area: chosen, location: center(chosen.frame))
+    }
+
+    private static func isContentRole(_ role: String?) -> Bool {
+        role == "AXScrollArea" || role == "AXWebArea"
+    }
+
+    private static func contains(_ frame: ActuatorRect, _ pointer: ActuatorPoint?) -> Bool {
+        guard let pointer else {
+            return false
+        }
+        return frame.contains(pointer)
+    }
+
+    /// An area about the same size as the focused input, and sitting on it,
+    /// is the composer. A much larger parent that happens to contain the caret
+    /// is the history and stays eligible.
+    private static func isFocusedInput(_ area: ScrollArea, _ focus: ActuatorRect?) -> Bool {
+        if area.isTextInput {
+            return true
+        }
+        guard let focus, focus.width > 0, focus.height > 0 else {
+            return false
+        }
+        guard area.frame.width > 0, area.frame.height > 0 else {
+            return false
+        }
+        let areaSize = area.frame.width * area.frame.height
+        let focusSize = focus.width * focus.height
+        guard areaSize.isFinite, focusSize.isFinite, areaSize > 0, focusSize > 0 else {
+            return false
+        }
+        if areaSize > focusSize * 2 {
+            return false
+        }
+        let areaCenter = ActuatorPoint(
+            x: area.frame.x + area.frame.width / 2,
+            y: area.frame.y + area.frame.height / 2
+        )
+        if focus.contains(areaCenter) {
+            return true
+        }
+        let focusCenter = ActuatorPoint(x: focus.x + focus.width / 2, y: focus.y + focus.height / 2)
+        return area.frame.contains(focusCenter)
+    }
+
+    private static func bestHovered(_ areas: [ScrollArea]) -> ScrollArea? {
+        areas.max { lhs, rhs in
+            if lhs.depth != rhs.depth {
+                return lhs.depth < rhs.depth
+            }
+            let left = areaSize(lhs)
+            let right = areaSize(rhs)
+            if left != right {
+                return left < right
+            }
+            return lhs.identifier > rhs.identifier
+        }
+    }
+
+    private static func largest(_ areas: [ScrollArea]) -> ScrollArea? {
+        areas.max { lhs, rhs in
+            let left = areaSize(lhs)
+            let right = areaSize(rhs)
+            if left != right {
+                return left < right
+            }
+            return lhs.identifier > rhs.identifier
+        }
+    }
+
+    private static func areaSize(_ area: ScrollArea) -> Double {
+        let size = area.frame.width * area.frame.height
+        return size.isFinite && size > 0 ? size : 0
+    }
+
+    private static func center(_ frame: ActuatorRect) -> ActuatorPoint {
+        ActuatorPoint(x: frame.x + frame.width / 2, y: frame.y + frame.height / 2)
+    }
+
+    private static func travel(_ area: ScrollArea, _ direction: ScrollDirection) -> Double {
+        switch direction {
+        case .left:
+            return area.travelLeft
+        case .down:
+            return area.travelDown
+        case .up:
+            return area.travelUp
+        case .right:
+            return area.travelRight
         }
     }
 }
