@@ -146,6 +146,7 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     private let hookObserver: HookMenuObserver
     private let runtime: SupervimRuntime
     private let launchGate: PermissionLaunchGate
+    private let loginItems: LoginItemRegistration
 
     override init() {
         let session = MenuBarApplication.makeSession(frontmost: WorkspaceFrontmost())
@@ -159,6 +160,7 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
                 opener: WorkspacePrivacyPaneOpener()
             )
         )
+        self.loginItems = LoginItemRegistration(controller: MainAppLoginItemController())
         super.init()
         observer.onEvent = { [weak self] in
             Task { @MainActor in
@@ -169,6 +171,7 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = notification
+        synchronizeLoginItem()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
         syncPermissions(showWhenNeeded: true)
@@ -197,7 +200,15 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
 
     func exclusionPanelDidSetLaunchAtLogin(_ enabled: Bool) {
         _ = try? session.setLaunchAtLogin(enabled)
+        synchronizeLoginItem()
         refreshSettings()
+    }
+
+    private func synchronizeLoginItem() {
+        let enabled = session.editor().launchAtLogin
+        if case .failed(let message) = loginItems.apply(launchAtLogin: enabled) {
+            _ = session.reportNotice(message)
+        }
     }
 
     func exclusionPanelDidClose() {

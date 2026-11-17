@@ -81,7 +81,8 @@ public enum MenuBarEffect: Equatable, Sendable {
 /// Status title, menu enablement, pause persistence, and the exclusion editor.
 ///
 /// Hint is shown as Normal. The spec names only Normal, Insert, and Paused.
-/// Launch-at-login is stored and not registered. This type does not install an event tap.
+/// Launch-at-login is stored here. `LoginItemRegistration` applies the saved flag.
+/// This type does not register a login item and does not install an event tap.
 public final class MenuBarController<Clock: KeyTimeSource>: @unchecked Sendable {
     private let repository: SettingsRepository
     private let interpreter: EventInterpreter<Clock>
@@ -217,6 +218,11 @@ public final class MenuBarController<Clock: KeyTimeSource>: @unchecked Sendable 
 
     public func closeSettings() -> ExclusionEditor {
         settingsVisible = false
+        return editor()
+    }
+
+    public func reportNotice(_ text: String) -> ExclusionEditor {
+        notice = text
         return editor()
     }
 

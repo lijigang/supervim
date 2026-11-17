@@ -74,6 +74,9 @@ jobs:
       - name: Measure help overlay coverage
         run: scripts/help-overlay-coverage.sh
 
+      - name: Measure login item coverage
+        run: scripts/login-item-coverage.sh
+
       - name: Assemble unsigned menu-bar app
         run: scripts/assemble-app.sh
 
@@ -84,4 +87,23 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST")" = "Supervim"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST")" = "13.0"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$PLIST")" = "APPL"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = "com.lijigang.supervim"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
           test -x build/Supervim.app/Contents/MacOS/Supervim
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Package unsigned DMG
+        run: scripts/package-dmg.sh build/Supervim.app build/Supervim.dmg
+
+      - name: Mount DMG and verify layout
+        run: scripts/verify-dmg.sh build/Supervim.dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Supervim-unsigned-dmg
+          path: build/Supervim.dmg
+          if-no-files-found: error
