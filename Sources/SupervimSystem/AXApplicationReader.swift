@@ -74,7 +74,7 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
             role: copyString(element, kAXRoleAttribute),
             subrole: copyString(element, kAXSubroleAttribute),
             actions: copyActions(element),
-            editableAttribute: copyBool(element, kAXEditableAttribute),
+            editableAttribute: copyBool(element, "AXEditable"),
             frame: copyFrame(element)
         )
     }
@@ -279,7 +279,10 @@ private func copyElement(_ element: AXUIElement, _ attribute: String) -> AXUIEle
     guard let value = copyAttribute(element, attribute) else {
         return nil
     }
-    return value as? AXUIElement
+    guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+        return nil
+    }
+    return unsafeDowncast(value, to: AXUIElement.self)
 }
 
 private func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
@@ -340,7 +343,7 @@ private func copyPoint(_ value: CFTypeRef) -> CGPoint? {
     guard CFGetTypeID(value) == AXValueGetTypeID() else {
         return nil
     }
-    let axValue = unsafeBitCast(value, to: AXValue.self)
+    let axValue = unsafeDowncast(value, to: AXValue.self)
     guard AXValueGetType(axValue) == .cgPoint else {
         return nil
     }
@@ -355,7 +358,7 @@ private func copySize(_ value: CFTypeRef) -> CGSize? {
     guard CFGetTypeID(value) == AXValueGetTypeID() else {
         return nil
     }
-    let axValue = unsafeBitCast(value, to: AXValue.self)
+    let axValue = unsafeDowncast(value, to: AXValue.self)
     guard AXValueGetType(axValue) == .cgSize else {
         return nil
     }

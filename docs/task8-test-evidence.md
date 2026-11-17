@@ -105,6 +105,21 @@ Test Suite 'AXScannerTests' passed at 2026-11-17 06:52:41.180
 
 这只再证明了源码扫描和分类测试仍然通过。覆盖率数字仍是上面那一轮。
 
+## macOS CI：第一次编译失败
+
+第一次 macOS 运行：<https://github.com/lijigang/supervim/actions/runs/44034625697>，作业 <https://github.com/lijigang/supervim/actions/runs/44034625697/job/133874409846>。提交 `8857e81`。`swift build` 失败，退出码 1。测试还没开始。Xcode 26.6，Swift 6.3.3，`macos-26-arm64`。
+
+两处是错误，不是分类行为不对：
+
+```text
+AXApplicationReader.swift:77:50: error: cannot find 'kAXEditableAttribute' in scope
+AXApplicationReader.swift:282:18: error: conditional downcast to CoreFoundation type 'AXUIElement' will always succeed
+```
+
+另外两处是警告：`unsafeBitCast` 到 `AXValue` 应改成 `unsafeDowncast`。公开 SDK 里没有 `kAXEditableAttribute` 这个常量；属性名仍是 `AXEditable`。`AXUIElement` 在 Swift 6 里不能用 `as?` 从任意 CF 值转出来，要先比 `CFGetTypeID`。
+
+改法只在 macOS 适配里：可编辑属性用字符串 `AXEditable`；元素和 `AXValue` 在类型号一致后再 `unsafeDowncast`。分类、缓存和测试期望没有改。Linux 上这个文件不编译，所以不能在这里证明 macOS 已经通过。改完之后的 `swift test --filter AXScannerTests` 只证明源码扫描和分类测试仍然通过。macOS 是否编译通过，看这一次之后的 `macos-latest` 运行。
+
 ## 扫描器在做什么
 
 焦点更新只读当前焦点元素和前台 bundle id，不读子节点。结果写入 `LockedFocusCache`，再由 `EventTapWiring.publishCachedFocus()` 交给 ModeMachine。按键路径仍然只读缓存。
