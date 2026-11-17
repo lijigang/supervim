@@ -21,6 +21,8 @@ import AppKit
 /// The focused-element read copies one element. Child walks happen only in the
 /// window read, which callers use off the key hook.
 public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
+    private let identities = FocusIdentityVault()
+
     public init() {}
 
     public func readFocusedElement() -> AccessibilityRead<AccessibilityElement> {
@@ -31,7 +33,7 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
         guard let element = copyElement(system, kAXFocusedUIElementAttribute) else {
             return .unavailable
         }
-        return .value(snapshot(of: element))
+        return .value(snapshot(of: element, identify: true))
     }
 
     public func readFrontmostBundleIdentifier() -> AccessibilityRead<String> {
@@ -69,16 +71,26 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
         return .value(snapshotTree(window, depth: 0, limits: limits, remaining: &remaining))
     }
 
-    private func snapshot(of element: AXUIElement) -> AccessibilityElement {
-        AccessibilityElement(
-            role: copyString(element, kAXRoleAttribute),
-            subrole: copyString(element, kAXSubroleAttribute),
+    private func snapshot(of element: AXUIElement, identify: Bool = false) -> AccessibilityElement {
+        let role = copyString(element, kAXRoleAttribute)
+        let subrole = copyString(element, kAXSubroleAttribute)
+        return AccessibilityElement(
+            role: role,
+            subrole: subrole,
             actions: copyActions(element),
             editableAttribute: copyBool(element, "AXEditable" as CFString),
+            identity: identify ? focusIdentity(element) : nil,
             frame: copyFrame(element),
             verticalScroll: copyScrollBar(element, kAXVerticalScrollBarAttribute),
             horizontalScroll: copyScrollBar(element, kAXHorizontalScrollBarAttribute)
         )
+    }
+
+    /// The same accessibility element keeps one token across reads.
+    /// `CFEqual` is the identity. A new wrapper for that control does not count
+    /// as entering a different field.
+    private func focusIdentity(_ element: AXUIElement) -> String {
+        identities.token(for: element)
     }
 
     private func snapshotTree(
@@ -254,6 +266,33 @@ public final class AXFocusSignal: FocusChangeSignaling, @unchecked Sendable {
         #else
         return 0
         #endif
+    }
+}
+
+/// Remembers accessibility elements this process has already named.
+/// `CFEqual` is the identity. A new wrapper for the same control keeps the token.
+private final class FocusIdentityVault: @unchecked Sendable {
+    private let lock = NSLock()
+    private var known: [(element: AXUIElement, token: String)] = []
+    private var next = 0
+
+    func token(for element: AXUIElement) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        for entry in known where sameElement(entry.element, element) {
+            return entry.token
+        }
+        next += 1
+        let token = "ax-\(next)"
+        known.append((element, token))
+        if known.count > 32 {
+            known.removeFirst(known.count - 32)
+        }
+        return token
+    }
+
+    private func sameElement(_ lhs: AXUIElement, _ rhs: AXUIElement) -> Bool {
+        CFEqual(unsafeBitCast(lhs, to: CFTypeRef.self), unsafeBitCast(rhs, to: CFTypeRef.self))
     }
 }
 

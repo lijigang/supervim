@@ -29,6 +29,69 @@ final class AXScannerTests: XCTestCase {
         XCTAssertEqual(TreeWalkLimits.standard, TreeWalkLimits(maxNodes: 2_000, maxDepth: 32))
     }
 
+    /// WeChat and Grok keep the caret in the composer. Esc must stay Normal
+    /// until the focused element actually changes, `i` is pressed, or the
+    /// pointer clicks back into that same composer.
+    func testEscapedComposerStaysNormalUntilFocusEntersANewInput() {
+        let composer = AccessibilityElement(
+            role: "AXTextArea",
+            editableAttribute: true,
+            identity: "composer",
+            frame: ElementFrame(x: 0, y: 520, width: 800, height: 80)
+        )
+        let search = AccessibilityElement(
+            role: "AXTextField",
+            subrole: "AXSearchField",
+            editableAttribute: true,
+            identity: "search",
+            frame: ElementFrame(x: 200, y: 8, width: 240, height: 28)
+        )
+        let held = makeFocusFixture()
+        held.reader.focused = .value(composer)
+        held.reader.bundle = .value("com.tencent.xinWeChat")
+
+        XCTAssertEqual(held.pipeline.scanner.noteFocusChanged().mode, .insert)
+        let escape = held.pipeline.wiring.handleKeyDown(KeyEvent(identity: .escape))
+        XCTAssertEqual(escape.mode, .normal)
+        XCTAssertEqual(escape.delivery, .swallow)
+        XCTAssertEqual(held.pipeline.scanner.noteFocusChanged().mode, .normal)
+        let up = held.pipeline.wiring.handleKeyDown(KeyEvent("k"))
+        XCTAssertEqual(up.mode, .normal)
+        XCTAssertEqual(up.delivery, .swallow)
+        XCTAssertEqual(up.actions, [CommandMap().action(for: .scrollUp)])
+        XCTAssertEqual(
+            held.interpreter.updateCache(
+                CachedFocus(editability: .unknown, bundleIdentifier: "com.tencent.xinWeChat")
+            ).mode,
+            .normal
+        )
+
+        held.reader.focused = .value(AccessibilityElement(role: "AXWebArea", identity: "history"))
+        XCTAssertEqual(held.pipeline.scanner.noteFocusChanged().mode, .normal)
+        held.reader.focused = .value(search)
+        XCTAssertEqual(held.pipeline.scanner.noteFocusChanged().mode, .insert)
+
+        let typed = makeFocusFixture()
+        typed.reader.focused = .value(composer)
+        typed.reader.bundle = .value("com.tencent.xinWeChat")
+        _ = typed.pipeline.scanner.noteFocusChanged()
+        _ = typed.pipeline.wiring.handleKeyDown(KeyEvent(identity: .escape))
+        let insert = typed.pipeline.wiring.handleKeyDown(KeyEvent("i"))
+        XCTAssertEqual(insert.mode, .insert)
+        XCTAssertEqual(insert.delivery, .swallow)
+        XCTAssertEqual(typed.pipeline.wiring.handleKeyDown(KeyEvent("k")).delivery, .passThrough)
+
+        let clicked = makeFocusFixture()
+        clicked.reader.focused = .value(composer)
+        clicked.reader.bundle = .value("com.tencent.xinWeChat")
+        _ = clicked.pipeline.scanner.noteFocusChanged()
+        _ = clicked.pipeline.wiring.handleKeyDown(KeyEvent(identity: .escape))
+        let outside = clicked.interpreter.acceptPointerClick(x: 40, y: 40)
+        XCTAssertEqual(outside.mode, .normal)
+        let inside = clicked.interpreter.acceptPointerClick(x: 120, y: 540)
+        XCTAssertEqual(inside.mode, .insert)
+    }
+
     func testEditableFocusEntersInsertAndPassesTheKeyWithoutWalkingTheWindow() {
         let fixture = makeFocusFixture()
         fixture.reader.focused = .value(inputElement())
@@ -38,7 +101,12 @@ final class AXScannerTests: XCTestCase {
 
         XCTAssertEqual(
             fixture.pipeline.cache.currentFocus(),
-            CachedFocus(editability: .editable, bundleIdentifier: "com.apple.Safari")
+            CachedFocus(
+                editability: .editable,
+                bundleIdentifier: "com.apple.Safari",
+                frame: FocusFrame(x: 20, y: 20, width: 120, height: 24),
+                role: "AXTextField"
+            )
         )
         XCTAssertEqual(decision.delivery, .passThrough)
         XCTAssertEqual(decision.mode, .insert)
@@ -103,7 +171,12 @@ final class AXScannerTests: XCTestCase {
 
         XCTAssertEqual(
             fixture.pipeline.cache.currentFocus(),
-            CachedFocus(editability: .editable, bundleIdentifier: "")
+            CachedFocus(
+                editability: .editable,
+                bundleIdentifier: "",
+                frame: FocusFrame(x: 20, y: 20, width: 120, height: 24),
+                role: "AXTextField"
+            )
         )
         XCTAssertEqual(fixture.interpreter.mode, .normal)
         let typed = fixture.pipeline.wiring.handleKeyDown(KeyEvent("a"))
@@ -267,7 +340,15 @@ final class AXScannerTests: XCTestCase {
 
         let focus = fixture.pipeline.wiring.refreshFocus()
 
-        XCTAssertEqual(focus, CachedFocus(editability: .editable, bundleIdentifier: "com.apple.Safari"))
+        XCTAssertEqual(
+            focus,
+            CachedFocus(
+                editability: .editable,
+                bundleIdentifier: "com.apple.Safari",
+                frame: FocusFrame(x: 20, y: 20, width: 120, height: 24),
+                role: "AXTextField"
+            )
+        )
         XCTAssertEqual(fixture.interpreter.mode, .insert)
         XCTAssertEqual(fixture.reader.windowReads, 0)
         XCTAssertEqual(fixture.reader.focusedReads, 1)
@@ -563,7 +644,7 @@ final class AXScannerTests: XCTestCase {
 
         XCTAssertEqual(
             fixture.pipeline.cache.currentFocus(),
-            CachedFocus(editability: .notEditable, bundleIdentifier: "com.apple.Safari")
+            CachedFocus(editability: .notEditable, bundleIdentifier: "com.apple.Safari", role: "AXButton")
         )
         XCTAssertEqual(fixture.interpreter.mode, .normal)
         XCTAssertEqual(fixture.reader.focusedReads, 1)
@@ -806,7 +887,12 @@ final class AXScannerTests: XCTestCase {
 
         XCTAssertEqual(
             cache.currentFocus(),
-            CachedFocus(editability: .editable, bundleIdentifier: "com.apple.Safari")
+            CachedFocus(
+                editability: .editable,
+                bundleIdentifier: "com.apple.Safari",
+                frame: FocusFrame(x: 20, y: 20, width: 120, height: 24),
+                role: "AXTextField"
+            )
         )
         XCTAssertEqual(decision, EventDecision(delivery: .passThrough, mode: .normal))
         XCTAssertEqual(reader.windowReads, 0)

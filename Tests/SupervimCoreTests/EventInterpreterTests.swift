@@ -610,6 +610,24 @@ final class EventInterpreterTests: XCTestCase {
         XCTAssertTrue(decision.actions.isEmpty)
     }
 
+    func testModeTraceLineNamesTheFocusAndTheTrigger() {
+        XCTAssertEqual(
+            ModeTrace.formatLine(
+                timestamp: "2026-11-17T11:00:00Z",
+                from: .insert,
+                to: .normal,
+                role: "AXTextArea",
+                subrole: nil,
+                trigger: "escape",
+                identity: "composer"
+            ),
+            "2026-11-17T11:00:00Z insert -> normal trigger=escape role=AXTextArea subrole=- identity=composer"
+        )
+        XCTAssertEqual(ModeTrace.environmentKey, "SUPERVIM_LOG")
+        XCTAssertEqual(ModeTrace.defaultsKey, "SupervimDebugLog")
+        XCTAssertTrue(ModeTrace.logFileURL().path.hasSuffix("Library/Logs/Supervim.log"))
+    }
+
     func testInterpreterSourceDoesNotTouchTheSystemOrRecordKeys() throws {
         let url = repoRoot().appendingPathComponent("Sources/SupervimCore/EventInterpreter.swift")
         let text = try String(contentsOf: url, encoding: .utf8)

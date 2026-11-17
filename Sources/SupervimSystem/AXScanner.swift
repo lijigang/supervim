@@ -28,6 +28,8 @@ public struct AccessibilityElement: Equatable, Sendable {
     public var subrole: String?
     public var actions: [String]
     public var editableAttribute: Bool?
+    /// Stable identity of one accessibility element. Nil when the reader has none.
+    public var identity: String?
     public var frame: ElementFrame?
     public var children: [AccessibilityElement]
     public var childrenTruncated: Bool
@@ -41,6 +43,7 @@ public struct AccessibilityElement: Equatable, Sendable {
         subrole: String? = nil,
         actions: [String] = [],
         editableAttribute: Bool? = nil,
+        identity: String? = nil,
         frame: ElementFrame? = nil,
         children: [AccessibilityElement] = [],
         childrenTruncated: Bool = false,
@@ -51,6 +54,7 @@ public struct AccessibilityElement: Equatable, Sendable {
         self.subrole = subrole
         self.actions = actions
         self.editableAttribute = editableAttribute
+        self.identity = identity
         self.frame = frame
         self.children = children
         self.childrenTruncated = childrenTruncated
@@ -499,17 +503,46 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
 
     private func classifiedFocus() -> CachedFocus {
         let editability: FocusEditability
+        var identity: String?
+        var frame: FocusFrame?
+        var role: String?
+        var subrole: String?
         switch reader.readFocusedElement() {
         case .unavailable:
             editability = .unknown
         case .value(let element):
             editability = FocusClassification.editability(of: element)
+            identity = element.identity
+            role = element.role
+            subrole = element.subrole
+            if let elementFrame = element.frame {
+                frame = FocusFrame(
+                    x: elementFrame.x,
+                    y: elementFrame.y,
+                    width: elementFrame.width,
+                    height: elementFrame.height
+                )
+            }
         }
         switch reader.readFrontmostBundleIdentifier() {
         case .unavailable:
-            return CachedFocus(editability: editability, bundleIdentifier: "")
+            return CachedFocus(
+                editability: editability,
+                bundleIdentifier: "",
+                elementIdentity: identity,
+                frame: frame,
+                role: role,
+                subrole: subrole
+            )
         case .value(let identifier):
-            return CachedFocus(editability: editability, bundleIdentifier: identifier)
+            return CachedFocus(
+                editability: editability,
+                bundleIdentifier: identifier,
+                elementIdentity: identity,
+                frame: frame,
+                role: role,
+                subrole: subrole
+            )
         }
     }
 }

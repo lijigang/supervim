@@ -145,10 +145,13 @@ public final class NormalCommandSession: @unchecked Sendable {
 
         if wantsActuation, let snapshot {
             let scrolling = prepared.actuatorActions.contains(where: isScroll)
-            let point = scrolling ? pointer.currentPointer() : nil
-            let areas = scrolling && snapshot.scrollCatalogReady
-                ? ScrollAreaCatalog.retarget(snapshot.scrollAreas, pointer: point, focus: snapshot.focusPoint)
-                : []
+            let aimed = scrolling ? aimedScroll(snapshot: snapshot, actions: prepared.actuatorActions) : nil
+            let point = aimed?.point ?? (scrolling ? pointer.currentPointer() : nil)
+            let areas = aimed?.areas ?? (
+                scrolling && snapshot.scrollCatalogReady
+                    ? ScrollAreaCatalog.retarget(snapshot.scrollAreas, pointer: point, focus: snapshot.focusPoint)
+                    : []
+            )
             let context = ActuationContext(
                 bundleIdentifier: pipeline.cache.currentFocus().bundleIdentifier,
                 pointer: point,
@@ -173,10 +176,19 @@ public final class NormalCommandSession: @unchecked Sendable {
         if delivery == .swallow, reason == nil {
             delivery = .passThrough
         }
+        if holdingComposer(mode: decision.mode) != nil,
+           !prepared.actuatorActions.isEmpty,
+           prepared.actuatorActions.allSatisfy(isScroll),
+           delivery == .passThrough
+        {
+            delivery = .swallow
+            reason = .actuator
+        }
         var mode = decision.mode
         var focusedPath: [Int]?
         if wantsFocus, let snapshot, delivery == .swallow, case .found(let target) = snapshot.firstInput {
             if focuser.focusInput(path: target.path) {
+                decider.releaseHeldInput()
                 focusedPath = target.path
                 mode = pipeline.scanner.noteFocusChanged().mode
             }
@@ -256,6 +268,61 @@ public final class NormalCommandSession: @unchecked Sendable {
             focusedPath: nil,
             swallowReason: .overlay
         )
+    }
+
+    /// While Normal is held on the focused input, wheel the history area and
+    /// do not fall back to scrolling that input.
+    private func aimedScroll(
+        snapshot: CommandSnapshot,
+        actions: [Action]
+    ) -> (areas: [ScrollArea], point: ActuatorPoint?)? {
+        guard snapshot.scrollCatalogReady, let frame = holdingComposer(mode: decider.mode) else {
+            return nil
+        }
+        guard let direction = firstScrollDirection(actions) else {
+            return nil
+        }
+        let point = pointer.currentPointer()
+        var areas = ScrollAreaCatalog.retarget(snapshot.scrollAreas, pointer: point, focus: snapshot.focusPoint)
+        let known = Set(areas.map(\.identifier))
+        let extra = ScrollAreaCatalog.retarget(snapshot.structuralAreas, pointer: point, focus: snapshot.focusPoint)
+        for area in extra where !known.contains(area.identifier) {
+            areas.append(area)
+        }
+        guard let aim = ContentScroll.aim(
+            areas: areas,
+            pointer: point,
+            excludedFrame: frame,
+            direction: direction
+        ) else {
+            return ([], point)
+        }
+        var marked = aim.area
+        marked.containsPointer = true
+        return ([marked], aim.location)
+    }
+
+    private func holdingComposer(mode: SupervimMode) -> ActuatorRect? {
+        guard mode == .normal else {
+            return nil
+        }
+        let focus = pipeline.cache.currentFocus()
+        guard focus.editability == .editable, focus.elementIdentity != nil, let frame = focus.frame else {
+            return nil
+        }
+        guard frame.width > 0, frame.height > 0, frame.x.isFinite, frame.y.isFinite else {
+            return nil
+        }
+        return ActuatorRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
+    }
+
+    private func firstScrollDirection(_ actions: [Action]) -> ScrollDirection? {
+        for action in actions {
+            if case .scroll(let direction, _) = action {
+                return direction
+            }
+        }
+        return nil
     }
 
     private func isScroll(_ action: Action) -> Bool {

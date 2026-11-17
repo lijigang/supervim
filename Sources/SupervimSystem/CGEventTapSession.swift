@@ -27,7 +27,7 @@ public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
         if port != nil {
             return
         }
-        let eventMask = eventBit(.keyDown) | eventBit(.keyUp) | eventBit(.flagsChanged)
+        let eventMask = eventBit(.keyDown) | eventBit(.keyUp) | eventBit(.flagsChanged) | eventBit(.leftMouseDown)
         guard let created = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -117,6 +117,19 @@ private final class EventTapBox: @unchecked Sendable {
 
 private extension SystemKeyRecord {
     init(event: CGEvent, type: CGEventType) {
+        if type == .leftMouseDown {
+            let userData = event.getIntegerValueField(.eventSourceUserData)
+            self.init(
+                kind: .other,
+                keyCode: 0,
+                modifierFlags: event.flags.rawValue,
+                unicode: "",
+                sourceUserData: userData,
+                pointerX: Double(event.location.x),
+                pointerY: Double(event.location.y)
+            )
+            return
+        }
         let kind: SystemEventKind
         switch type {
         case .keyDown:

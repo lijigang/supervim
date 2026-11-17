@@ -5,6 +5,8 @@ public protocol KeyDeciding: AnyObject, Sendable {
     func handleKeyDown(_ event: KeyEvent, cache: CachedFocus) -> EventDecision
     func updateCache(_ cache: CachedFocus) -> EventDecision
     func endHint(_ reason: HintEnd) -> EventDecision
+    func acceptPointerClick(x: Double, y: Double) -> EventDecision
+    func releaseHeldInput()
     var mode: SupervimMode { get }
 }
 
@@ -54,19 +56,26 @@ public struct SystemKeyRecord: Equatable, Sendable {
     public var modifierFlags: UInt64
     public var unicode: String
     public var sourceUserData: Int64
+    /// Set for a left-button press. Nil on key records.
+    public var pointerX: Double?
+    public var pointerY: Double?
 
     public init(
         kind: SystemEventKind,
         keyCode: UInt16,
         modifierFlags: UInt64,
         unicode: String,
-        sourceUserData: Int64 = 0
+        sourceUserData: Int64 = 0,
+        pointerX: Double? = nil,
+        pointerY: Double? = nil
     ) {
         self.kind = kind
         self.keyCode = keyCode
         self.modifierFlags = modifierFlags
         self.unicode = unicode
         self.sourceUserData = sourceUserData
+        self.pointerX = pointerX
+        self.pointerY = pointerY
     }
 }
 
@@ -205,6 +214,10 @@ public final class EventTapWiring: @unchecked Sendable {
         defer { lock.unlock() }
         if record.sourceUserData == SynthesizedEventMark.userData {
             return SystemKeyOutcome(delivery: .passThrough, decision: nil)
+        }
+        if let x = record.pointerX, let y = record.pointerY {
+            let decision = decider.acceptPointerClick(x: x, y: y)
+            return SystemKeyOutcome(delivery: .passThrough, decision: decision)
         }
         guard let event = SystemKeyTranslation.keyEvent(from: record) else {
             return SystemKeyOutcome(delivery: .passThrough, decision: nil)
