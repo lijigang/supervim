@@ -86,7 +86,8 @@ public struct CommandBinding: Equatable, Sendable {
 ///
 /// The map is a pure value. It does not know the current mode, and it does not
 /// call ModeMachine. EventTap (task 7) decides whether to feed a key to the
-/// parser. Actuator (task 11) performs the action.
+/// parser. Actuator (task 9) performs click, scroll, and shortcut actions.
+/// Task 11 connects an event-tap decision to that actuator.
 public struct CommandMap: Sendable {
     /// Vimium's default `scrollStepSize`, in points. `j`/`k`/`h`/`l` all use it.
     public static let scrollStepPoints = 60

@@ -44,12 +44,20 @@ public struct SystemKeyRecord: Equatable, Sendable {
     public var keyCode: UInt16
     public var modifierFlags: UInt64
     public var unicode: String
+    public var sourceUserData: Int64
 
-    public init(kind: SystemEventKind, keyCode: UInt16, modifierFlags: UInt64, unicode: String) {
+    public init(
+        kind: SystemEventKind,
+        keyCode: UInt16,
+        modifierFlags: UInt64,
+        unicode: String,
+        sourceUserData: Int64 = 0
+    ) {
         self.kind = kind
         self.keyCode = keyCode
         self.modifierFlags = modifierFlags
         self.unicode = unicode
+        self.sourceUserData = sourceUserData
     }
 }
 
@@ -80,6 +88,13 @@ public enum SystemKeyTranslation {
     ]
 
     private static let escapeKeyCode: UInt16 = 0x35
+
+    public static func virtualKeyCode(forUnshifted character: Character) -> UInt16? {
+        for (code, glyph) in unshifted where glyph == character {
+            return code
+        }
+        return nil
+    }
 
     public static func keyEvent(from record: SystemKeyRecord) -> KeyEvent? {
         guard record.kind == .keyDown else {
@@ -179,6 +194,9 @@ public final class EventTapWiring: @unchecked Sendable {
     public func handleSystemRecord(_ record: SystemKeyRecord) -> SystemKeyOutcome {
         lock.lock()
         defer { lock.unlock() }
+        if record.sourceUserData == SynthesizedEventMark.userData {
+            return SystemKeyOutcome(delivery: .passThrough, decision: nil)
+        }
         guard let event = SystemKeyTranslation.keyEvent(from: record) else {
             return SystemKeyOutcome(delivery: .passThrough, decision: nil)
         }

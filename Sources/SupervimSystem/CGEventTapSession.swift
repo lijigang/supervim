@@ -137,11 +137,13 @@ private extension SystemKeyRecord {
         )
         let unicode = length > 0 ? String(utf16CodeUnits: units, count: length) : ""
         let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
+        let userData = event.getIntegerValueField(.eventSourceUserData)
         self.init(
             kind: kind,
             keyCode: keyCode,
             modifierFlags: event.flags.rawValue,
-            unicode: unicode
+            unicode: unicode,
+            sourceUserData: userData
         )
     }
 }

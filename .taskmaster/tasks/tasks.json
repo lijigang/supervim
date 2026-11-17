@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T06:24:43.000Z",
-      "description": "Supervim 已批准任务。任务 1 到任务 6 已合并，状态为 done。任务 7 为 done。任务 8 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T06:48:54.000Z",
+      "description": "Supervim 已批准任务。任务 1 到任务 7 已合并，状态为 done。任务 9 为 done。任务 8 以及任务 10 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -98,7 +98,7 @@
         "id": 9,
         "title": "Actuator 点击、滚动与快捷键执行",
         "description": "执行点击、Command 点击、滚动和应用快捷键。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [1],
         "priority": "medium",
         "details": "执行器负责点击、带 Command 的点击、滚动和把查找等动作映射到应用快捷键。F 的 Command 点击不是右键菜单。滚动目标是指针或焦点所在的可滚动区域，具体命中规则在实现时写清楚。yy、历史和标签页动作若通过快捷键完成，只对规格点名的应用承诺，其余应用按放过或已记录的偏离处理。",
