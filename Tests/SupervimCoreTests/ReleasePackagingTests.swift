@@ -50,6 +50,13 @@ final class ReleasePackagingTests: XCTestCase {
         XCTAssertTrue(text.contains("WARNING"))
         XCTAssertFalse(text.contains("Developer ID"))
         XCTAssertFalse(text.contains("--options runtime"))
+        XCTAssertTrue(text.contains("security import"))
+        XCTAssertTrue(text.contains("security find-certificate"))
+        XCTAssertTrue(text.contains("\"$IDENTITY_NAME\""))
+        XCTAssertTrue(text.contains("-legacy"))
+        XCTAssertTrue(text.contains("env:SUPERVIM_SIGNING_P12_PASSWORD"))
+        XCTAssertFalse(text.contains("pass:$P12_PASSWORD"))
+        XCTAssertFalse(text.contains("pass:\"$P12_PASSWORD\""))
     }
 
     func testMakeSigningCertScriptBuildsALongLivedCodeSigningP12() throws {

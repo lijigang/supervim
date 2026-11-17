@@ -100,10 +100,45 @@ chmod 600 "$P12_FILE"
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 security set-keychain-settings -lut 21600 "$KEYCHAIN"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+# `security import` has no file or env passphrase flag. -P is the only
+# non-interactive form. xtrace is off for this command so the p12 password
+# is not written to the log. The value is not echoed.
+case $- in
+  *x*) tracing=1; set +x ;;
+  *) tracing=0 ;;
+esac
 security import "$P12_FILE" -k "$KEYCHAIN" -P "$P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+if [[ "$tracing" -eq 1 ]]; then
+  set -x
+fi
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
 
-openssl pkcs12 -in "$P12_FILE" -clcerts -nokeys -passin "pass:$P12_PASSWORD" -out "$CRT_FILE"
+# The checked-in secret is a legacy PKCS#12 (RC2-40-CBC). OpenSSL 3 refuses
+# that bag unless -legacy is passed, and `pass:` would put the password on
+# the command line. Prefer the certificate already imported into the
+# temporary keychain. Fall back to openssl only if that lookup is empty.
+extract_leaf_cert() {
+  if security find-certificate -c "$IDENTITY_NAME" -p "$KEYCHAIN" > "$CRT_FILE" 2>/dev/null \
+      && grep -q 'BEGIN CERTIFICATE' "$CRT_FILE"; then
+    return 0
+  fi
+  rm -f "$CRT_FILE"
+  # Password comes from the environment. Do not use -passin pass:...
+  if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then
+    if openssl pkcs12 -legacy -in "$P12_FILE" -clcerts -nokeys \
+        -passin env:SUPERVIM_SIGNING_P12_PASSWORD -out "$CRT_FILE"; then
+      return 0
+    fi
+    rm -f "$CRT_FILE"
+  fi
+  openssl pkcs12 -in "$P12_FILE" -clcerts -nokeys \
+    -passin env:SUPERVIM_SIGNING_P12_PASSWORD -out "$CRT_FILE"
+}
+extract_leaf_cert
+if ! grep -q 'BEGIN CERTIFICATE' "$CRT_FILE"; then
+  echo "ERROR: imported the p12 but could not read the certificate named \"$IDENTITY_NAME\"." >&2
+  exit 1
+fi
 # A self-signed code-signing certificate is invisible to `find-identity` until
 # this keychain trusts it for the codeSign policy. Trust stays in the temporary
 # keychain and is deleted with it.
