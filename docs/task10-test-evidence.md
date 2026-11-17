@@ -135,7 +135,7 @@ HintOverlay.swift function coverage: 100.00% (18/18)
 
 1. **会话放在 `HintSession.swift`，显示和点击放在 `HintOverlay.swift`。** 面板只在 macOS 上编译。测试注入扫描协议、presenter 和 `ActionActuator` 的记录 poster。
 2. **按键路径不扫描。** `consume` 不调用 `clickableElements()`。缓存要由钩子外面的 `refreshClickables()` 先填上。焦点变化那条现有路径没有改成顺便扫窗口，避免拖慢任务 8 的焦点更新。
-3. **占位程序仍不安装事件钩子，也不创建面板。** 钩子一旦装上，`j` 和其他还没接到执行器的命令会被吞掉。任务 11 或任务 13 安装钩子时，要在决策返回之后调用 `HintController.consume`，不能在 `EventTapWiring` 里面扫描。
+3. **菜单进程不安装事件钩子，也不创建面板，也不启动 AXScanner。** 任务 13 已经把入口放在 `Sources/Supervim/SupervimApp.swift`。任务 11 正在做启动时的扫描、钩子和执行器接线，这里不重复。应用层要显示标签时调用 `HintOverlayControlling`：钩子外 `refreshClickables()`，然后 `enterHint(_:)`、`receiveHintKey(_:keyCode:)`、`cancelHint()`。`consume(_:hintKeyCode:)` 只是把已有的 `OverlayUpdate` 转成这三步。`enterHint` 本身不把模式机改成 Hint，调用方先用解释器进入 Hint。`cancelHint` 会隐藏标签并离开 Hint。
 4. **`f` 和 `F` 共用 HintLabeler 的标签。** 点击种类在会话开始时定下。提示过程中再按 Command 或 Shift，不把普通点击改成 Command 点击。大小写仍由 HintLabeler 折叠。
 5. **点在元素中心，用左键。** `F` 的修饰键只有 Command。`canAccessibilityPress` 固定为 false。路径字符串会放进点击请求的 identifier，但不会走 `AXPress`，因为没有人把 `AXUIElement` 绑进 `AXElementStore`。
 6. **锚点是元素原点。** 原点在框的边上。坐标保持扫描器给的空间，不翻转。真机上和 AppKit 窗口是否重合，没有测。
@@ -155,6 +155,33 @@ HintOverlay.swift function coverage: 100.00% (18/18)
 - 没有确认虚拟键 `0x33` 就是这台 Mac 上的退格
 - 没有安装 `CGEventTap`，所以占位程序里按 `f` 还不会出标签
 - 没有走真实的辅助功能树，也没有让指针真的移动
+
+## 变基到任务 13，并给出应用层接口
+
+`origin/main` 在 `bceff31` 合入了任务 13，入口改到 `Sources/Supervim/SupervimApp.swift`。本分支变基到那次提交。任务 13 保持 `done`，只把任务 10 标成 `done`。任务 11 当时还没有合入，所以菜单进程没有调用浮层，也没有安装事件钩子或启动 AXScanner。
+
+应用层接口是 `HintOverlayControlling`：
+
+- `refreshClickables()`：钩子外刷新可点击元素
+- `enterHint(_:)`：用缓存显示标签。不扫描，也不自己把模式机推进 Hint
+- `receiveHintKey(_:keyCode:)`：过滤、点中或取消。不传键码时无名键算无效输入
+- `cancelHint()`：隐藏标签并离开 Hint
+
+`consume` 只是把解释器已经给出的 `OverlayUpdate` 转成这三步。
+
+直接调用这组方法的测试先没编译过。时间：2026-11-17 07:26:06 UTC。退出码 1。代表错误是 `cannot find type 'HintOverlayControlling' in scope`。
+
+补上协议和方法之后，有一条测试忘了先刷新缓存，`enterHint` 按「扫描不可用」取消。这是测试漏了刷新，不是把不可用改成显示。改完测试再跑。时间：2026-11-17 07:27:01 UTC 到约 07:27:03 UTC。退出码 0。那 3 个测试通过，没有编译警告。
+
+变基之后的全量再跑一次。时间：2026-11-17 07:27:11 UTC 到 07:27:20 UTC。命令：`scripts/hint-overlay-coverage.sh`。退出码 0。没有编译警告。系统测试 158 个（`HintOverlayTests` 30 个），核心测试 303 个，合计 461 个 XCTest，0 失败。Swift Testing 仍是 0。
+
+```text
+HintSession.swift line coverage: 97.56% (120/123)
+HintOverlay.swift line coverage: 98.68% (149/151)
+HintOverlay.swift region coverage: 94.34% (50/53)
+```
+
+同一份 profdata 上，`EventInterpreter.swift` 是 98.41%（248/252），`MenuBarController.swift` 是 99.41%（169/170）。任务 13 的菜单覆盖率没有被这次改动拉到 90% 以下。
 
 ## macOS CI：第一次编译失败
 

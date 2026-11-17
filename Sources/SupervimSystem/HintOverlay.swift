@@ -49,6 +49,23 @@ public enum HintCancelReason: Equatable, Sendable {
     case dismissed
 }
 
+/// What the app calls after it has already decided to hint.
+/// Entering hint does not scan and does not install an event tap.
+/// The caller moves ModeMachine into Hint before `enterHint`, then feeds
+/// later keys here. `cancelHint` hides the labels and leaves Hint.
+public protocol HintOverlayControlling: AnyObject, Sendable {
+    func refreshClickables() -> ClickableQuery
+    func enterHint(_ click: HintClick) -> HintOverlayResult
+    func receiveHintKey(_ event: KeyEvent, keyCode: UInt16?) -> HintOverlayResult
+    func cancelHint() -> HintOverlayResult
+}
+
+extension HintOverlayControlling {
+    public func receiveHintKey(_ event: KeyEvent) -> HintOverlayResult {
+        receiveHintKey(event, keyCode: nil)
+    }
+}
+
 public enum HintOverlayResult: Equatable, Sendable {
     case unchanged
     case ignored
@@ -87,7 +104,7 @@ public final class LockedClickableCache: @unchecked Sendable {
 /// a context menu. Accessibility Press is not used: the snapshot has no
 /// bound element, and a press with a dangling identifier would do nothing.
 /// `canAccessibilityPress: false` keeps the actuator on the mouse path.
-public final class HintController: @unchecked Sendable {
+public final class HintController: HintOverlayControlling, @unchecked Sendable {
     private let querier: any ClickableQuerying
     private let presenter: any OverlayPresenting
     private let actuator: ActionActuator
@@ -117,23 +134,45 @@ public final class HintController: @unchecked Sendable {
         return query
     }
 
+    /// Maps a decision the event hook already returned. Does not scan.
+    /// `beginHint` is `enterHint`, a hint key is `receiveHintKey`, and
+    /// `endHint` is `cancelHint`. Help is left for task 12.
     @discardableResult
     public func consume(_ decision: EventDecision, hintKeyCode: UInt16? = nil) -> HintOverlayResult {
-        lock.lock()
-        defer { lock.unlock() }
         guard let update = decision.overlay else {
             return .unchanged
         }
         switch update {
         case .beginHint(let click):
-            return begin(click)
+            return enterHint(click)
         case .hintKey(let event):
-            return type(event, keyCode: hintKeyCode)
+            return receiveHintKey(event, keyCode: hintKeyCode)
         case .endHint:
-            return dismiss()
+            return cancelHint()
         case .showHelp:
             return .ignored
         }
+    }
+
+    @discardableResult
+    public func enterHint(_ click: HintClick) -> HintOverlayResult {
+        lock.lock()
+        defer { lock.unlock() }
+        return begin(click)
+    }
+
+    @discardableResult
+    public func receiveHintKey(_ event: KeyEvent, keyCode: UInt16? = nil) -> HintOverlayResult {
+        lock.lock()
+        defer { lock.unlock() }
+        return type(event, keyCode: keyCode)
+    }
+
+    @discardableResult
+    public func cancelHint() -> HintOverlayResult {
+        lock.lock()
+        defer { lock.unlock() }
+        return dismiss()
     }
 
     private func begin(_ click: HintClick) -> HintOverlayResult {
@@ -187,6 +226,7 @@ public final class HintController: @unchecked Sendable {
     private func dismiss() -> HintOverlayResult {
         session = nil
         presenter.hideOverlay()
+        _ = mode.endHint(.cancelled)
         return .cancelled(.dismissed)
     }
 

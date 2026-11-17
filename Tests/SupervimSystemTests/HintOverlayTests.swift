@@ -341,6 +341,50 @@ final class HintOverlayTests: XCTestCase {
         XCTAssertEqual(presentation.markers.map(\.text), ["A"])
     }
 
+    func testAppEntersReceivesAndCancelsHintsWithoutADecision() {
+        let rig = makeRig(elements: tenBoxes())
+        let hints: any HintOverlayControlling = rig.controller
+        _ = hints.refreshClickables()
+        _ = rig.interpreter.handleKeyDown(KeyEvent("F"), cache: safariFocus)
+        XCTAssertEqual(rig.interpreter.mode, .hint(.command))
+        guard case .showing(let presentation) = hints.enterHint(.command) else {
+            return XCTFail("enterHint should show the cached labels")
+        }
+        XCTAssertEqual(presentation.markers.count, 10)
+        XCTAssertEqual(presentation.policy, .hintLabels)
+        XCTAssertEqual(rig.querier.reads, 1)
+        XCTAssertEqual(rig.poster.effects, [])
+        XCTAssertEqual(rig.interpreter.mode, .hint(.command))
+
+        let partial = hints.receiveHintKey(KeyEvent("a"))
+        guard case .showing(let filtered) = partial else {
+            return XCTFail("a prefix should stay inside the direct key method, got \(partial)")
+        }
+        XCTAssertEqual(filtered.markers.map(\.text), ["AA", "AS"])
+        XCTAssertEqual(hints.cancelHint(), .cancelled(.dismissed))
+        XCTAssertEqual(rig.poster.effects, [])
+        XCTAssertEqual(rig.presenter.hides, 1)
+        XCTAssertEqual(rig.interpreter.mode, .normal)
+    }
+
+    func testDirectKeyCompletesACommandClick() {
+        let rig = makeRig(elements: [oneBox()])
+        let hints: any HintOverlayControlling = rig.controller
+        _ = hints.refreshClickables()
+        _ = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
+        _ = hints.enterHint(.plain)
+        let effect = plainClick(x: 14, y: 23)
+        XCTAssertEqual(
+            hints.receiveHintKey(KeyEvent("a"), keyCode: nil),
+            .activated(
+                HintActivation(index: 0, click: .plain, point: HintPoint(x: 14, y: 23), identifier: "2/0"),
+                .performed([effect])
+            )
+        )
+        XCTAssertEqual(rig.poster.effects, [effect])
+        XCTAssertEqual(rig.interpreter.mode, .normal)
+    }
+
     func testHintKeyWithoutASessionDoesNotClick() {
         let rig = makeRig(elements: [oneBox()])
         let result = rig.controller.consume(EventDecision(
@@ -361,10 +405,27 @@ final class HintOverlayTests: XCTestCase {
         }
     }
 
-    func testPlaceholderDoesNotStartTheOverlay() throws {
-        let url = repoRoot().appendingPathComponent("Sources/Supervim/main.swift")
-        let text = try String(contentsOf: url, encoding: .utf8)
-        for token in ["HintController", "NonActivatingHintPanel", "refreshClickables(", "CGEvent.tapCreate"] {
+    func testMenuProcessDoesNotStartTheOverlay() throws {
+        let directory = repoRoot().appendingPathComponent("Sources/Supervim")
+        let files = try FileManager.default.subpathsOfDirectory(atPath: directory.path)
+            .filter { $0.hasSuffix(".swift") }
+        XCTAssertFalse(files.isEmpty)
+        XCTAssertFalse(files.contains("main.swift"))
+        var text = ""
+        for relative in files {
+            text += try String(contentsOf: directory.appendingPathComponent(relative), encoding: .utf8)
+        }
+        for token in [
+            "HintController",
+            "HintOverlayControlling",
+            "NonActivatingHintPanel",
+            "enterHint(",
+            "receiveHintKey(",
+            "cancelHint(",
+            "refreshClickables(",
+            "CGEvent.tapCreate",
+            "AXScanner",
+        ] {
             XCTAssertFalse(text.contains(token), token)
         }
     }
