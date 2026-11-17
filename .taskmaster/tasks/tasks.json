@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T05:30:00.000Z",
-      "description": "Supervim 已批准任务。任务 1 和任务 2 已合并，状态为 done。任务 3 在评审前保持 in-progress。任务 4 为 done。任务 5 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T05:39:00.000Z",
+      "description": "Supervim 已批准任务。任务 1 和任务 2 已合并，状态为 done。任务 3 在评审前保持 in-progress。任务 4 和任务 5 为 done。任务 6 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -54,7 +54,7 @@
         "id": 5,
         "title": "CommandMap 命令映射",
         "description": "把默认 Vimium 按键映射到命令、动作或放过。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [3],
         "priority": "medium",
         "details": "依赖 KeyParser 的序列结果。默认映射包括滚动 j/k/h/l、半页 d/u、页首页尾 gg/G、历史 H/L、标签 J/K、关闭 x、新建 t、刷新 r、查找 /、复制链接 yy、提示 f/F、帮助 ?、插入 i、gi。F 是带 Command 的点击，不是右键菜单。yy 仅计划用于 Safari 与 Chromium，具体 bundle id 清单尚未批准，实现时要单独列出并标出未定部分。偏离 Vimium 的地方必须写进文档。未知 Normal 键映射为放过。",

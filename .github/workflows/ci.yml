@@ -44,6 +44,9 @@ jobs:
       - name: Measure HintLabeler coverage
         run: scripts/hint-labeler-coverage.sh
 
+      - name: Measure CommandMap coverage
+        run: scripts/command-map-coverage.sh
+
       - name: Assemble unsigned menu-bar app
         run: scripts/assemble-app.sh
 
