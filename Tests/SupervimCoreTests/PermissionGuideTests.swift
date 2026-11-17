@@ -281,8 +281,9 @@ final class PermissionGuideTests: XCTestCase {
         XCTAssertTrue(guidance.body.contains("does not guarantee"))
         XCTAssertTrue(guidance.body.contains("without quitting and reopening"))
         XCTAssertTrue(guidance.body.contains("not verified"))
-        XCTAssertTrue(guidance.body.contains("unsigned"))
-        XCTAssertTrue(guidance.body.contains("rebuilt"))
+        XCTAssertTrue(guidance.body.contains("minus button"))
+        XCTAssertTrue(guidance.body.contains("ad-hoc"))
+        XCTAssertTrue(guidance.body.contains("stable identity"))
         XCTAssertFalse(guidance.body.contains("no restart is required"))
         XCTAssertFalse(guidance.body.contains("takes effect immediately"))
         XCTAssertFalse(guidance.body.contains("AXManualAccessibility"))
@@ -381,9 +382,9 @@ private func expectedBody(_ lead: String) -> String {
     """
     \(lead)
 
-    Granting a permission does not guarantee that this process receives it without quitting and reopening Supervim. Whether that happens depends on the system version and whether the permission database refreshes. It is not verified.
+    If Supervim is already in that list but this copy still has no permission, the old row belongs to a previous build. Select it, click the minus button to remove it, then add this Supervim and turn it on. That is required once when moving from an ad-hoc build to a build signed with the stable identity. Later upgrades keep the same signing certificate, so the grant stays.
 
-    An unsigned Supervim may need to be allowed again after it is rebuilt, because the code-directory hash can change.
+    Granting a permission does not guarantee that this process receives it without quitting and reopening Supervim. Whether that happens depends on the system version and whether the permission database refreshes. It is not verified.
     """
 }
 

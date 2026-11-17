@@ -29,14 +29,37 @@ final class ReleasePackagingTests: XCTestCase {
         XCTAssertTrue(text.contains("com.lijigang.supervim") || text.contains("Info.plist"))
     }
 
-    func testPackageScriptUsesCreateDMGAndAdHocCodesign() throws {
+    func testPackageScriptUsesCreateDMGAndTheStableSigner() throws {
         let text = try packagingText("scripts/package-dmg.sh")
         XCTAssertTrue(text.contains("create-dmg"))
         XCTAssertTrue(text.contains("--app-drop-link"))
-        XCTAssertTrue(text.contains("codesign"))
-        XCTAssertTrue(text.contains("-s -"))
+        XCTAssertTrue(text.contains("sign-app.sh"))
         XCTAssertTrue(text.contains("Supervim.app"))
+        XCTAssertFalse(text.contains("-s -"))
         XCTAssertFalse(text.contains("Developer ID"))
+    }
+
+    func testSignScriptUsesOneCertificateAndFallsBackLoudly() throws {
+        let text = try packagingText("scripts/sign-app.sh")
+        XCTAssertTrue(text.contains("com.lijigang.supervim"))
+        XCTAssertTrue(text.contains("SUPERVIM_SIGNING_P12_BASE64"))
+        XCTAssertTrue(text.contains("SUPERVIM_SIGNING_P12_PASSWORD"))
+        XCTAssertTrue(text.contains("certificate leaf"))
+        XCTAssertTrue(text.contains("cdhash"))
+        XCTAssertTrue(text.contains("-s -"))
+        XCTAssertTrue(text.contains("WARNING"))
+        XCTAssertFalse(text.contains("Developer ID"))
+        XCTAssertFalse(text.contains("--options runtime"))
+    }
+
+    func testMakeSigningCertScriptBuildsALongLivedCodeSigningP12() throws {
+        let text = try packagingText("scripts/make-signing-cert.sh")
+        XCTAssertTrue(text.contains("codeSigning"))
+        XCTAssertTrue(text.contains("7300"))
+        XCTAssertTrue(text.contains("pkcs12"))
+        XCTAssertTrue(text.contains("SUPERVIM_SIGNING_P12_PASSWORD"))
+        XCTAssertTrue(text.contains("refusing to write"))
+        XCTAssertFalse(text.contains("BEGIN PRIVATE KEY"))
     }
 
     func testVerifyScriptMountsAndChecksTheApplicationsLink() throws {
@@ -59,6 +82,8 @@ final class ReleasePackagingTests: XCTestCase {
         XCTAssertTrue(text.contains("GITHUB_TOKEN"))
         XCTAssertTrue(text.contains("assemble-app.sh release"))
         XCTAssertTrue(text.contains("package-dmg.sh"))
+        XCTAssertTrue(text.contains("SUPERVIM_SIGNING_P12_BASE64"))
+        XCTAssertTrue(text.contains("SUPERVIM_SIGNING_P12_PASSWORD"))
         XCTAssertTrue(text.contains("gh release"))
         XCTAssertTrue(text.contains("permissions:"))
     }
@@ -95,8 +120,7 @@ final class ReleasePackagingTests: XCTestCase {
         XCTAssertTrue(text.contains("--volicon"))
         XCTAssertTrue(text.contains("AppIcon.icns"))
         XCTAssertTrue(text.contains("--app-drop-link"))
-        XCTAssertTrue(text.contains("codesign"))
-        XCTAssertTrue(text.contains("-s -"))
+        XCTAssertTrue(text.contains("sign-app.sh"))
         XCTAssertFalse(text.contains("Developer ID"))
     }
 
@@ -106,6 +130,25 @@ final class ReleasePackagingTests: XCTestCase {
         XCTAssertTrue(text.contains("CFBundleIconFile"))
         XCTAssertTrue(text.contains("AppIcon"))
         XCTAssertTrue(text.contains(".VolumeIcon.icns"))
+        XCTAssertTrue(text.contains("codesign -d -r-"))
+    }
+
+    func testAppSourcesDoNotResetTCCOrChangeTheBundleIdentifier() throws {
+        let root = repoRoot().appendingPathComponent("Sources")
+        let files = try FileManager.default.subpathsOfDirectory(atPath: root.path)
+            .filter { $0.hasSuffix(".swift") }
+        XCTAssertFalse(files.isEmpty)
+        for relative in files {
+            let text = try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+            XCTAssertFalse(text.contains("tccutil"), relative)
+            XCTAssertFalse(text.contains("TCC.db"), relative)
+            XCTAssertFalse(text.contains("resetSystemPrivacy"), relative)
+        }
+        let plist = try String(
+            contentsOf: repoRoot().appendingPathComponent("App/Supervim/Info.plist"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(plist.contains("com.lijigang.supervim"))
     }
 
     func testMakeIconScriptBuildsAnIconset() throws {

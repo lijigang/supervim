@@ -101,8 +101,12 @@ public protocol PrivacyPaneOpening: Sendable {
 /// Decides when the permission guide is visible and which System Settings pane to open.
 ///
 /// Opening a pane does not mean the grant is active. This process may still lack the
-/// permission until it is quit and reopened, and that is not verified. An unsigned
-/// rebuild may need the user to allow Supervim again.
+/// permission until it is quit and reopened, and that is not verified.
+///
+/// `AXIsProcessTrusted` is false both when Supervim has never been allowed and when
+/// System Settings still has a row for an older, differently signed copy. This
+/// process cannot list the privacy database, so the guide always tells the user how
+/// to remove a stale row. It does not clear saved privacy grants.
 public final class PermissionGuide: @unchecked Sendable {
     private let status: any PermissionStatusProviding
     private let opener: any PrivacyPaneOpening
@@ -170,9 +174,9 @@ public final class PermissionGuide: @unchecked Sendable {
         """
         \(lead)
 
-        Granting a permission does not guarantee that this process receives it without quitting and reopening Supervim. Whether that happens depends on the system version and whether the permission database refreshes. It is not verified.
+        If Supervim is already in that list but this copy still has no permission, the old row belongs to a previous build. Select it, click the minus button to remove it, then add this Supervim and turn it on. That is required once when moving from an ad-hoc build to a build signed with the stable identity. Later upgrades keep the same signing certificate, so the grant stays.
 
-        An unsigned Supervim may need to be allowed again after it is rebuilt, because the code-directory hash can change.
+        Granting a permission does not guarantee that this process receives it without quitting and reopening Supervim. Whether that happens depends on the system version and whether the permission database refreshes. It is not verified.
         """
     }
 
