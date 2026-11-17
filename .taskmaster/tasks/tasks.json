@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T05:10:00.000Z",
-      "description": "Supervim 已批准任务。任务 1 和任务 2 已合并，状态为 done。任务 3 在评审前保持 in-progress。任务 4 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T05:30:00.000Z",
+      "description": "Supervim 已批准任务。任务 1 和任务 2 已合并，状态为 done。任务 3 在评审前保持 in-progress。任务 4 为 done。任务 5 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -43,7 +43,7 @@
         "id": 4,
         "title": "HintLabeler 最短前缀标签",
         "description": "为当前窗口可点击元素分配最短且前缀安全的主键行标签。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [1],
         "priority": "medium",
         "details": "标签字符使用主键行 asdfghjkl。分配结果必须前缀安全：一个标签不能是另一个标签的前缀。输入无效或 Esc 时由后续模式机取消；本任务只生成和过滤标签。不扫描辅助功能树，不绘制浮层。覆盖率目标是后续纯逻辑的总目标，不在本任务宣称已经达到。",
