@@ -35,6 +35,16 @@ jobs:
       - name: Test
         run: swift test
 
+      - name: Render UI snapshots
+        run: scripts/render-ui-snapshots.sh build/ui-snapshots
+
+      - name: Upload UI snapshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-snapshots
+          path: build/ui-snapshots
+          if-no-files-found: error
+
       - name: Measure ModeMachine coverage
         run: scripts/mode-machine-coverage.sh
 

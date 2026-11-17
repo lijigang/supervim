@@ -1,5 +1,6 @@
 #if canImport(AppKit)
 import AppKit
+import QuartzCore
 import SupervimCore
 
 /// Transparent hint labels and the shortcut sheet. The panel does not activate
@@ -12,15 +13,16 @@ public final class NonActivatingHintPanel: OverlayPresenting, HelpPresenting, @u
 
     public func present(_ presentation: OverlayPresentation) {
         let markers = presentation.markers
+        let typedPrefix = presentation.typedPrefix
         PanelDispatch.perform { holder in
-            holder.show(markers)
+            holder.show(markers, typedPrefix: typedPrefix)
         }
     }
 
     public func presentHelp(_ presentation: HelpPresentation) {
-        let text = presentation.page.text
+        let page = presentation.page
         PanelDispatch.perform { holder in
-            holder.showHelp(text)
+            holder.showHelp(page)
         }
     }
 
@@ -91,7 +93,7 @@ private final class PanelHolder {
         panel.animationBehavior = .none
     }
 
-    func show(_ markers: [HintMarker]) {
+    func show(_ markers: [HintMarker], typedPrefix: String = "") {
         let screens = NSScreen.screens.map { screen in
             DisplayFrame(
                 x: screen.frame.origin.x,
@@ -106,7 +108,7 @@ private final class PanelHolder {
         }
         let content = NSView(frame: .zero)
         var globals: [HintRect] = []
-        var badges: [NSTextField] = []
+        var badges: [HintBadgeView] = []
         for marker in markers {
             let element = HintRect(
                 x: marker.anchor.x,
@@ -114,10 +116,10 @@ private final class PanelHolder {
                 width: marker.elementWidth,
                 height: marker.elementHeight
             )
-            let badge = badgeField(marker.text)
-            let fitted = badge.fittingSize
-            let width = max(Double(fitted.width) + 8, 18)
-            let height = max(Double(fitted.height) + 4, 16)
+            let badge = HintBadgeView(label: marker.text, typedPrefix: typedPrefix)
+            let size = badge.badgeSize
+            let width = Double(size.width)
+            let height = Double(size.height)
             guard let placed = HintGeometry.labelRect(
                 element: element,
                 badgeWidth: width,
@@ -151,6 +153,10 @@ private final class PanelHolder {
         }
         let frame = arranged.frame
         content.frame = NSRect(x: 0, y: 0, width: CGFloat(frame.width), height: CGFloat(frame.height))
+        if #available(macOS 14.0, *) {
+            content.clipsToBounds = false
+        }
+        panel.hasShadow = false
         panel.contentView = content
         panel.setFrame(
             NSRect(
@@ -161,50 +167,48 @@ private final class PanelHolder {
             ),
             display: true
         )
-        panel.orderFrontRegardless()
+        reveal()
     }
 
-    func showHelp(_ text: String) {
-        guard !text.isEmpty else {
+    func showHelp(_ page: HelpPage) {
+        guard !page.entries.isEmpty else {
             panel.orderOut(nil)
             return
         }
-        let field = NSTextField(wrappingLabelWithString: text)
-        field.isEditable = false
-        field.isSelectable = false
-        field.isBezeled = false
-        field.drawsBackground = true
-        field.backgroundColor = NSColor(srgbRed: 1, green: 0.97, blue: 0.86, alpha: 0.96)
-        field.textColor = .black
-        field.font = NSFont.systemFont(ofSize: 13)
-        let width: CGFloat = 560
-        field.preferredMaxLayoutWidth = width - 24
-        let fitted = field.fittingSize
-        let height = max(fitted.height + 20, 40)
-        field.frame = NSRect(x: 12, y: 10, width: width - 24, height: height - 20)
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        content.addSubview(field)
+        let content = HelpSheetView(page: page)
+        let size = content.bounds.size
+        panel.hasShadow = true
         panel.contentView = content
-        var frame = NSRect(x: 80, y: 80, width: width, height: height)
-        if let screen = NSScreen.main?.visibleFrame {
-            frame.origin.x = screen.midX - width / 2
-            frame.origin.y = screen.midY - height / 2
+        var frame = NSRect(x: 80, y: 80, width: size.width, height: size.height)
+        if let visible = FloatingScreen.underMouse()?.visibleFrame {
+            let maxX = max(visible.minX + 12, visible.maxX - size.width - 12)
+            let maxY = max(visible.minY + 12, visible.maxY - size.height - 12)
+            frame.origin.x = min(max(visible.midX - size.width / 2, visible.minX + 12), maxX)
+            frame.origin.y = min(max(visible.midY - size.height / 2, visible.minY + 12), maxY)
         }
         panel.setFrame(frame, display: true)
-        panel.orderFrontRegardless()
+        reveal()
     }
 
-    private func badgeField(_ text: String) -> NSTextField {
-        let field = NSTextField(labelWithString: text)
-        field.isEditable = false
-        field.isSelectable = false
-        field.isBezeled = false
-        field.drawsBackground = true
-        field.backgroundColor = NSColor(srgbRed: 1, green: 0.93, blue: 0.4, alpha: 0.95)
-        field.textColor = .black
-        field.font = NSFont.boldSystemFont(ofSize: 12)
-        field.alignment = .center
-        return field
+    /// Fades the panel in once. Later hint keystrokes replace the labels
+    /// without playing the fade again. Reduce Motion shows the sheet at once.
+    private func reveal() {
+        let duration = ChromeMotion.appearDuration(
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
+        let alreadyVisible = panel.isVisible && panel.alphaValue > 0.95
+        if duration == 0 || alreadyVisible {
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+            return
+        }
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
     }
 }
 #endif
