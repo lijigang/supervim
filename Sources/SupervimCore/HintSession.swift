@@ -169,6 +169,12 @@ public struct HintSession: Sendable {
         active
     }
 
+    /// Lowercase characters typed so far. The overlay uses this to paint the
+    /// matched prefix. It does not change which label is selected.
+    public var typedText: String {
+        labeler.typed
+    }
+
     public var markers: [HintMarker] {
         guard active else {
             return []

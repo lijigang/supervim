@@ -15,16 +15,24 @@ protocol ExclusionSettingsPanelDelegate: AnyObject {
 @MainActor
 final class ExclusionSettingsPanel: NSWindowController, NSWindowDelegate {
     private weak var panelDelegate: ExclusionSettingsPanelDelegate?
-    private let rows = NSStackView()
-    private let noticeField = NSTextField(wrappingLabelWithString: "")
-    private let launchButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    private let addButton = NSButton(title: "", target: nil, action: nil)
-    private var displayedBundles: [String] = []
+    private let chrome: SettingsChrome
 
     init(delegate: ExclusionSettingsPanelDelegate) {
         self.panelDelegate = delegate
+        let chrome = SettingsChrome(
+            onAdd: { [weak delegate] in
+                delegate?.exclusionPanelDidAddFrontmost()
+            },
+            onRemove: { [weak delegate] bundle in
+                delegate?.exclusionPanelDidRemove(bundle)
+            },
+            onLaunchAtLogin: { [weak delegate] enabled in
+                delegate?.exclusionPanelDidSetLaunchAtLogin(enabled)
+            }
+        )
+        self.chrome = chrome
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 380),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -32,11 +40,8 @@ final class ExclusionSettingsPanel: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
-        launchButton.target = self
-        launchButton.action = #selector(launchClicked(_:))
-        addButton.target = self
-        addButton.action = #selector(addClicked(_:))
-        installContent()
+        window.contentView = chrome.root
+        window.contentMinSize = NSSize(width: 420, height: 280)
     }
 
     @available(*, unavailable)
@@ -46,13 +51,23 @@ final class ExclusionSettingsPanel: NSWindowController, NSWindowDelegate {
 
     func render(_ editor: ExclusionEditor) {
         window?.title = editor.windowTitle
-        addButton.title = editor.addButtonTitle
-        addButton.isEnabled = editor.canAddFrontmost
-        launchButton.title = editor.launchAtLoginTitle
-        launchButton.state = editor.launchAtLogin ? .on : .off
-        noticeField.stringValue = editor.notice
-        displayedBundles = editor.bundleIdentifiers
-        rebuildRows(editor)
+        chrome.render(presentedCopy(editor))
+    }
+
+    /// Threads the editor's button titles through this target. `SettingsChrome` draws them.
+    private func presentedCopy(_ editor: ExclusionEditor) -> ExclusionEditor {
+        ExclusionEditor(
+            bundleIdentifiers: editor.bundleIdentifiers,
+            launchAtLogin: editor.launchAtLogin,
+            frontmostBundleIdentifier: editor.frontmostBundleIdentifier,
+            canAddFrontmost: editor.canAddFrontmost,
+            notice: editor.notice,
+            isVisible: editor.isVisible,
+            windowTitle: editor.windowTitle,
+            addButtonTitle: editor.addButtonTitle,
+            removeButtonTitle: editor.removeButtonTitle,
+            launchAtLoginTitle: editor.launchAtLoginTitle
+        )
     }
 
     func present() {
@@ -68,68 +83,6 @@ final class ExclusionSettingsPanel: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         _ = notification
         panelDelegate?.exclusionPanelDidClose()
-    }
-
-    private func installContent() {
-        guard let content = window?.contentView else {
-            return
-        }
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = 4
-        noticeField.maximumNumberOfLines = 3
-        stack.addArrangedSubview(launchButton)
-        stack.addArrangedSubview(rows)
-        stack.addArrangedSubview(addButton)
-        stack.addArrangedSubview(noticeField)
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -16),
-        ])
-    }
-
-    private func rebuildRows(_ editor: ExclusionEditor) {
-        for view in rows.arrangedSubviews {
-            rows.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        for (index, bundle) in editor.bundleIdentifiers.enumerated() {
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.spacing = 8
-            let label = NSTextField(labelWithString: bundle)
-            label.lineBreakMode = .byTruncatingTail
-            let remove = NSButton(title: editor.removeButtonTitle, target: self, action: #selector(removeClicked(_:)))
-            remove.tag = index
-            remove.setContentHuggingPriority(.required, for: .horizontal)
-            row.addArrangedSubview(label)
-            row.addArrangedSubview(remove)
-            rows.addArrangedSubview(row)
-        }
-    }
-
-    @objc private func addClicked(_ sender: NSButton) {
-        _ = sender
-        panelDelegate?.exclusionPanelDidAddFrontmost()
-    }
-
-    @objc private func removeClicked(_ sender: NSButton) {
-        guard displayedBundles.indices.contains(sender.tag) else {
-            return
-        }
-        panelDelegate?.exclusionPanelDidRemove(displayedBundles[sender.tag])
-    }
-
-    @objc private func launchClicked(_ sender: NSButton) {
-        panelDelegate?.exclusionPanelDidSetLaunchAtLogin(sender.state == .on)
     }
 }
 
@@ -230,41 +183,45 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
         let menu = NSMenu()
         let snapshot = session.snapshot()
         let title = misses.title(fallback: snapshot.statusTitle)
-        statusItem?.button?.title = title
+        let button = statusItem?.button
+        let glyph = MenuBarGlyphImage.image(for: MenuBarGlyphKind(statusTitle: snapshot.statusTitle))
+        button?.image = glyph
+        button?.imagePosition = title == snapshot.statusTitle ? .imageOnly : .imageLeading
+        button?.title = title == snapshot.statusTitle ? "" : title
+        button?.toolTip = snapshot.statusTitle
+        button?.setAccessibilityLabel(title == snapshot.statusTitle ? snapshot.statusTitle : "\(snapshot.statusTitle), \(title)")
+        statusItem?.length = title == snapshot.statusTitle ? NSStatusItem.squareLength : NSStatusItem.variableLength
         if title != snapshot.statusTitle {
+            TransientNoticePanel.shared.show(title)
             DispatchQueue.main.asyncAfter(deadline: .now() + misses.duration + 0.05) { [weak self] in
                 self?.installMenu()
             }
+        } else {
+            TransientNoticePanel.shared.hide()
         }
-        for command in snapshot.commands {
-            if command.kind == .separator {
-                if guidance.isVisible {
-                    menu.addItem(permissionsItem(title: guidance.menuTitle))
-                }
+        let permissionsTitle = guidance.isVisible ? guidance.menuTitle : nil
+        for item in MenuChrome.items(snapshot: snapshot, permissionsTitle: permissionsTitle) {
+            if item.isSeparator {
                 menu.addItem(.separator())
                 continue
             }
-            let item = NSMenuItem(
-                title: command.title,
-                action: #selector(menuClicked(_:)),
-                keyEquivalent: command.kind == .quit ? "q" : ""
+            let menuItem = NSMenuItem(
+                title: item.title,
+                action: item.isPermissions ? #selector(permissionsClicked(_:)) : #selector(menuClicked(_:)),
+                keyEquivalent: item.keyEquivalent
             )
-            item.target = self
-            item.isEnabled = command.enabled
-            item.tag = tag(for: command.kind)
-            menu.addItem(item)
+            menuItem.target = self
+            menuItem.isEnabled = item.enabled
+            if let kind = item.kind {
+                menuItem.tag = tag(for: kind)
+            }
+            if let symbol = item.symbolName,
+               let image = NSImage(systemSymbolName: symbol, accessibilityDescription: item.title) {
+                menuItem.image = image
+            }
+            menu.addItem(menuItem)
         }
         statusItem?.menu = menu
-    }
-
-    private func permissionsItem(title: String) -> NSMenuItem {
-        let item = NSMenuItem(
-            title: title,
-            action: #selector(permissionsClicked(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        return item
     }
 
     private func syncPermissions(showWhenNeeded: Bool) {

@@ -99,6 +99,13 @@ final class HintOverlayTests: XCTestCase {
         }
         XCTAssertEqual(presentation.markers.count, 2)
         XCTAssertTrue(presentation.markers.allSatisfy { $0.text.hasPrefix("Z") })
+        XCTAssertEqual(presentation.typedPrefix, "z")
+        for marker in presentation.markers {
+            XCTAssertEqual(
+                HintLabelHighlight.split(label: marker.text, typedPrefix: presentation.typedPrefix).matched,
+                "Z"
+            )
+        }
         XCTAssertEqual(rig.poster.effects, [])
         XCTAssertEqual(rig.presenter.hides, 0)
         XCTAssertEqual(rig.interpreter.mode, .hint(.plain))
@@ -149,6 +156,7 @@ final class HintOverlayTests: XCTestCase {
             return XCTFail("delete should remove the typed character, got \(filtered)")
         }
         XCTAssertEqual(presentation.markers.count, 27)
+        XCTAssertEqual(presentation.typedPrefix, "")
         XCTAssertEqual(rig.poster.effects, [])
 
         let arrow = rig.interpreter.handleKeyDown(KeyEvent(identity: .unnamed), cache: safariFocus)

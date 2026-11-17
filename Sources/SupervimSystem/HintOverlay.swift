@@ -30,10 +30,14 @@ public struct OverlayWindowPolicy: Equatable, Sendable {
 public struct OverlayPresentation: Equatable, Sendable {
     public var markers: [HintMarker]
     public var policy: OverlayWindowPolicy
+    /// Lowercase prefix the user has typed. Empty until a hint character arrives.
+    /// Labels that still match paint this many characters in the accent color.
+    public var typedPrefix: String
 
-    public init(markers: [HintMarker], policy: OverlayWindowPolicy) {
+    public init(markers: [HintMarker], policy: OverlayWindowPolicy, typedPrefix: String = "") {
         self.markers = markers
         self.policy = policy
+        self.typedPrefix = typedPrefix
     }
 }
 
@@ -197,9 +201,7 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
             return stop(.noTargets)
         }
         session = started
-        let presentation = OverlayPresentation(markers: started.markers, policy: .hintLabels)
-        presenter.present(presentation)
-        return .showing(presentation)
+        return show(started.markers, typedPrefix: started.typedText)
     }
 
     private func type(_ event: KeyEvent, keyCode: UInt16?) -> HintOverlayResult {
@@ -214,9 +216,7 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
             switch current.handle(input) {
             case .showing(let markers):
                 session = current
-                let presentation = OverlayPresentation(markers: markers, policy: .hintLabels)
-                presenter.present(presentation)
-                return .showing(presentation)
+                return show(markers, typedPrefix: current.typedText)
             case .activated(let activation):
                 let outcome = actuator.click(Self.request(for: activation))
                 session = nil
@@ -230,6 +230,16 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
                 return .inactive
             }
         }
+    }
+
+    private func show(_ markers: [HintMarker], typedPrefix: String) -> HintOverlayResult {
+        let presentation = OverlayPresentation(
+            markers: markers,
+            policy: .hintLabels,
+            typedPrefix: typedPrefix
+        )
+        presenter.present(presentation)
+        return .showing(presentation)
     }
 
     private func dismiss() -> HintOverlayResult {
