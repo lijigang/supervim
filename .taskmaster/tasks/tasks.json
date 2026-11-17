@@ -1,0 +1,176 @@
+{
+  "master": {
+    "metadata": {
+      "created": "2026-11-17T04:30:00.000Z",
+      "updated": "2026-11-17T04:30:00.000Z",
+      "description": "Supervim 已批准任务。任务 1 在评审前保持 in-progress，其余为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+    },
+    "tasks": [
+      {
+        "id": 1,
+        "title": "工程骨架、文档与 CI",
+        "description": "建立 SwiftPM 工程、菜单栏应用包脚手架、XCTest、批准文档和 macos-latest 构建测试。",
+        "status": "in-progress",
+        "dependencies": [],
+        "priority": "high",
+        "details": "创建 SupervimCore 纯逻辑库、SupervimSystem 系统适配库、Supervim 可执行文件。可执行文件是菜单栏占位：LSUIElement 为真，运行时使用 accessory 激活策略，菜单只有退出。组装脚本生成未签名的 Supervim.app。测试先失败再实现，覆盖清单校验、属性列表解码、启动预检和任务依赖图。写入中文宪法、规格、计划和可读任务列表。GitHub Actions 在 push 与 pull request 上执行 swift build、swift test 并组装 .app。不实现任务 2 到 15，不制作 DMG，不合并。",
+        "testStrategy": "先记录断言失败，再实现到 swift test 通过。Linux 只能证明纯逻辑。macOS 构建、菜单栏进程和 Dock 隐藏交给 macos-latest CI；本环境没有 macOS 时不得把这些写成已在本地执行。",
+        "subtasks": []
+      },
+      {
+        "id": 2,
+        "title": "ModeMachine 模式状态机",
+        "description": "实现 Normal、Insert、Hint、Paused 四种模式及合法转移。",
+        "status": "pending",
+        "dependencies": [1],
+        "priority": "medium",
+        "details": "纯逻辑状态机放在 SupervimCore。默认进入 Normal。可编辑焦点自动进入 Insert；Esc 回到 Normal 并离开输入焦点；i 手动进入 Insert。Hint 用于 f/F 标签。Paused 暂停拦截。未知焦点不得进入会吞键的模式。系统接口留在协议后面。本任务在任务 1 评审确认前不得开始。",
+        "testStrategy": "用 XCTest 覆盖合法转移、Esc、手动 Insert，以及未知可编辑性时不吞键。不连接真实事件钩子。",
+        "subtasks": []
+      },
+      {
+        "id": 3,
+        "title": "KeyParser 按键序列解析",
+        "description": "解析带前缀和超时的按键序列，区分命令前缀与应放过的按键。",
+        "status": "pending",
+        "dependencies": [1],
+        "priority": "medium",
+        "details": "纯逻辑解析器放在 SupervimCore。支持 gg 这类多键序列和超时。Normal 下无法识别的键必须放过，不能吞掉。Ctrl+] 放过下一键的具体动作属于任务 11，本任务只提供解析所需的序列结果。不读取 CGEvent。",
+        "testStrategy": "单元测试覆盖完整序列、未完成前缀、超时、以及未知键产生放过而不是丢弃。",
+        "subtasks": []
+      },
+      {
+        "id": 4,
+        "title": "HintLabeler 最短前缀标签",
+        "description": "为当前窗口可点击元素分配最短且前缀安全的主键行标签。",
+        "status": "pending",
+        "dependencies": [1],
+        "priority": "medium",
+        "details": "标签字符使用主键行 asdfghjkl。分配结果必须前缀安全：一个标签不能是另一个标签的前缀。输入无效或 Esc 时由后续模式机取消；本任务只生成和过滤标签。不扫描辅助功能树，不绘制浮层。覆盖率目标是后续纯逻辑的总目标，不在本任务宣称已经达到。",
+        "testStrategy": "用元素集合的单元测试验证最短标签、前缀冲突过滤和空集合。不测量 f 的 200ms 出现时间。",
+        "subtasks": []
+      },
+      {
+        "id": 5,
+        "title": "CommandMap 命令映射",
+        "description": "把默认 Vimium 按键映射到命令、动作或放过。",
+        "status": "pending",
+        "dependencies": [3],
+        "priority": "medium",
+        "details": "依赖 KeyParser 的序列结果。默认映射包括滚动 j/k/h/l、半页 d/u、页首页尾 gg/G、历史 H/L、标签 J/K、关闭 x、新建 t、刷新 r、查找 /、复制链接 yy、提示 f/F、帮助 ?、插入 i、gi。F 是带 Command 的点击，不是右键菜单。yy 仅计划用于 Safari 与 Chromium，具体 bundle id 清单尚未批准，实现时要单独列出并标出未定部分。偏离 Vimium 的地方必须写进文档。未知 Normal 键映射为放过。",
+        "testStrategy": "表驱动单元测试覆盖每条默认映射、未知键放过，以及 F 对应 Command 点击而不是上下文菜单。",
+        "subtasks": []
+      },
+      {
+        "id": 6,
+        "title": "Settings 本地设置",
+        "description": "用 UserDefaults 保存排除列表、暂停快捷键和登录启动偏好。",
+        "status": "pending",
+        "dependencies": [1],
+        "priority": "medium",
+        "details": "默认排除 Terminal、iTerm、Emacs。批准文档给了应用名，没有给 bundle identifier；实现时列出所采用的标识，并标明哪些是未批准的选择。暂停快捷键默认是 Ctrl+Option+V。登录启动只保存偏好，真正的登录项注册留到菜单栏与发布相关任务。设置不联网。测试使用替身或临时 UserDefaults，不写用户真实偏好域。",
+        "testStrategy": "用临时默认值和协议替身测试读取、写回、默认排除列表和暂停快捷键。不在单元测试里修改本机登录项。",
+        "subtasks": []
+      },
+      {
+        "id": 7,
+        "title": "EventTap 与模式、解析、命令接线",
+        "description": "用 CGEventTap 拦截按键，并接到模式机、解析器和命令表。",
+        "status": "pending",
+        "dependencies": [2, 3, 5],
+        "priority": "medium",
+        "details": "事件回调里只使用模式和已缓存的焦点，调用解析器与命令表，然后决定动作或更新浮层。禁止在事件钩子里同步扫描辅助功能树。未知焦点或未知 Normal 键必须把事件放回系统。排除列表中的前台应用不拦截。系统接口放在 SupervimSystem 的协议后面，测试注入替身。本任务不实现点击、滚动或浮层绘制。",
+        "testStrategy": "用假事件和假焦点驱动整条纯决策链。断言未知可编辑性会放过按键，并断言决策路径不调用扫描器。",
+        "subtasks": []
+      },
+      {
+        "id": 8,
+        "title": "AXScanner 与自动 Insert",
+        "description": "读取辅助功能树和焦点，判断当前焦点是否可编辑。",
+        "status": "pending",
+        "dependencies": [1],
+        "priority": "medium",
+        "details": "扫描器放在系统适配层，核心只依赖返回可编辑、不可编辑或未知的结果。未知必须传给模式机作为放过。可编辑焦点自动进入 Insert。不把辅助功能行为写成平台保证：授权后是否无需重启立即生效仍是可行性问题，见规格中的歧义说明。不在事件钩子里做全树同步扫描。",
+        "testStrategy": "协议替身覆盖可编辑、不可编辑和未知三种焦点。真实 Safari、备忘录、微信输入框的不吞字验收不在单元测试里宣称完成。",
+        "subtasks": []
+      },
+      {
+        "id": 9,
+        "title": "Actuator 点击、滚动与快捷键执行",
+        "description": "执行点击、Command 点击、滚动和应用快捷键。",
+        "status": "pending",
+        "dependencies": [1],
+        "priority": "medium",
+        "details": "执行器负责点击、带 Command 的点击、滚动和把查找等动作映射到应用快捷键。F 的 Command 点击不是右键菜单。滚动目标是指针或焦点所在的可滚动区域，具体命中规则在实现时写清楚。yy、历史和标签页动作若通过快捷键完成，只对规格点名的应用承诺，其余应用按放过或已记录的偏离处理。",
+        "testStrategy": "用记录调用的假执行器验证动作种类和参数。不在单元测试里驱动真实指针。",
+        "subtasks": []
+      },
+      {
+        "id": 10,
+        "title": "Overlay 与 f/F 提示",
+        "description": "在当前窗口上显示不激活的透明标签，输入标签后点击或取消。",
+        "status": "pending",
+        "dependencies": [4, 7, 8, 9],
+        "priority": "medium",
+        "details": "f 为当前窗口可点击元素标上最短主键行标签，键入标签后点击并关闭；F 同样流程但执行 Command 点击。Esc 或无效输入取消。浮层透明且不激活，避免抢走焦点。规格里的 Safari、Finder、系统设置 200ms 内出现、可访问按钮和链接覆盖超过 90% 是验收目标，不是本任务可以靠单元测试断言的结果。实现时测量并记录，测不到就明确写未测。",
+        "testStrategy": "用假扫描结果和假执行器测试标签显示、键入点击、Command 点击、Esc 和无效输入取消。不把延迟和覆盖率写成已通过。",
+        "subtasks": []
+      },
+      {
+        "id": 11,
+        "title": "滚动、gi、放过下一键与应用快捷键",
+        "description": "实现滚动、回到顶部或底部、gi、Ctrl+] 以及历史、标签和查找快捷键。",
+        "status": "pending",
+        "dependencies": [7, 8, 9],
+        "priority": "medium",
+        "details": "j/k/h/l 按标准 Vimium 方向滚动，d/u 半页，gg/G 顶部和底部，作用在指针或焦点所在的可滚动区域。gi 聚焦第一个输入框并进入 Insert。Ctrl+] 放过下一个按键。H/L、J/K、x、t、r、/ 映射到应用快捷键。yy 只对 Safari 和 Chromium 复制 URL。微信、备忘录和 Safari 地址栏的不吞字验收属于规格，完成前不得标成已测。",
+        "testStrategy": "假焦点和假执行器覆盖滚动方向、gi、放过下一键和快捷键映射。真实应用验收单独记录，未做就保持未测。",
+        "subtasks": []
+      },
+      {
+        "id": 12,
+        "title": "快捷键帮助",
+        "description": "用 ? 打开帮助，再用 ? 或 Esc 关闭。",
+        "status": "pending",
+        "dependencies": [10],
+        "priority": "medium",
+        "details": "帮助复用透明、不激活的浮层。内容来自当前默认命令表，偏离 Vimium 的条目要能被读到。帮助打开时不应把按键写进日志或发送到网络。",
+        "testStrategy": "测试 ? 打开、? 与 Esc 关闭，以及帮助文案包含默认绑定。不截图宣称视觉验收已完成，除非真的在 macOS 上看过。",
+        "subtasks": []
+      },
+      {
+        "id": 13,
+        "title": "菜单栏、暂停、设置与排除列表",
+        "description": "菜单栏显示模式，并提供暂停、恢复、设置和排除列表。",
+        "status": "pending",
+        "dependencies": [6, 7],
+        "priority": "medium",
+        "details": "状态栏显示 Normal、Insert 或 Paused。菜单提供暂停、恢复和设置。全局 Ctrl+Option+V 暂停。排除列表默认包含 Terminal、iTerm、Emacs，前台应用命中时完全不拦截。任务 1 的占位菜单只有应用名和退出，本任务才替换成模式显示。全局热键的注册方式和是否需要额外权限若平台不能保证，要写进歧义说明，不能假装已经保证。",
+        "testStrategy": "用假状态和假设置测试菜单文案、暂停恢复和排除应用放过按键。全局热键的真机行为未验证前不要标成通过。",
+        "subtasks": []
+      },
+      {
+        "id": 14,
+        "title": "权限引导",
+        "description": "在缺少辅助功能或输入监控权限时引导用户打开设置。",
+        "status": "pending",
+        "dependencies": [13],
+        "priority": "medium",
+        "details": "缺少 Accessibility 或 Input Monitoring 时显示引导，并给出系统设置链接。批准规格希望授权后无需重启即生效，同时要求标记平台可行性。Electron 的 AXManualAccessibility 不能当作本应用的保证；未签名二进制重新构建后可能需要重新授权。这些限制必须写给用户，不能改成已经保证免重启。",
+        "testStrategy": "用假权限状态测试引导出现、消失和设置链接。不在 CI 里授予真实辅助功能权限，也不宣称免重启已验证。",
+        "subtasks": []
+      },
+      {
+        "id": 15,
+        "title": "未签名 DMG、Release 与手工验收",
+        "description": "用 create-dmg 和 GitHub Releases 发布未签名磁盘映像，并补上手工验收说明。",
+        "status": "pending",
+        "dependencies": [10, 11, 12, 13, 14],
+        "priority": "medium",
+        "details": "在打 tag 时构建 macOS 应用，用 create-dmg 生成未签名 DMG，上传 GitHub Release。DMG 支持拖到应用程序文件夹。登录启动若规格中的可选项在此时实现，必须尊重任务 6 的偏好。README 要写未签名首次打开的方法，以及重复构建可能要重新授予权限的风险。Safari、Finder、系统设置的提示延迟和覆盖率，以及微信、备忘录、Safari 地址栏不吞字，都在本任务做手工验收；做不到的指标保持未测，不改规格。签名和公证不在初始范围内。",
+        "testStrategy": "CI 仍跑 macos-latest 的构建和单元测试。DMG 是否可下载、拖拽安装和手工验收以 Release 产物和书面记录为准，不由单元测试冒充。",
+        "subtasks": []
+      }
+    ]
+  }
+}
