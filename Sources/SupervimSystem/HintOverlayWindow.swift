@@ -92,29 +92,75 @@ private final class PanelHolder {
     }
 
     func show(_ markers: [HintMarker]) {
+        let screens = NSScreen.screens.map { screen in
+            DisplayFrame(
+                x: screen.frame.origin.x,
+                y: screen.frame.origin.y,
+                width: screen.frame.width,
+                height: screen.frame.height,
+                backingScale: Double(screen.backingScaleFactor)
+            )
+        }
+        for (index, screen) in screens.enumerated() {
+            ModeTrace.noteLine(ModeTrace.formatHintPlace(screen: screen, index: index))
+        }
         let content = NSView(frame: .zero)
-        var bounds = NSRect.null
+        var globals: [HintRect] = []
+        var badges: [NSTextField] = []
         for marker in markers {
+            let element = HintRect(
+                x: marker.anchor.x,
+                y: marker.anchor.y,
+                width: marker.elementWidth,
+                height: marker.elementHeight
+            )
             let badge = badgeField(marker.text)
             let fitted = badge.fittingSize
-            let width = max(fitted.width + 8, 18)
-            let height = max(fitted.height + 4, 16)
-            badge.frame = NSRect(x: marker.anchor.x, y: marker.anchor.y, width: width, height: height)
+            let width = max(Double(fitted.width) + 8, 18)
+            let height = max(Double(fitted.height) + 4, 16)
+            guard let placed = HintGeometry.labelRect(
+                element: element,
+                badgeWidth: width,
+                badgeHeight: height,
+                screens: screens
+            ) else {
+                continue
+            }
+            ModeTrace.noteLine(ModeTrace.formatHintLabel(index: marker.index, ax: element, ns: placed))
+            badge.frame = NSRect(
+                x: CGFloat(placed.x),
+                y: CGFloat(placed.y),
+                width: CGFloat(placed.width),
+                height: CGFloat(placed.height)
+            )
             content.addSubview(badge)
-            bounds = bounds.union(badge.frame)
+            badges.append(badge)
+            globals.append(placed)
         }
-        guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else {
+        guard let arranged = HintGeometry.arrange(badges: globals), !badges.isEmpty else {
             panel.orderOut(nil)
             return
         }
-        let origin = bounds.origin
-        for subview in content.subviews {
-            subview.frame.origin.x -= origin.x
-            subview.frame.origin.y -= origin.y
+        for (badge, local) in zip(badges, arranged.local) {
+            badge.frame = NSRect(
+                x: CGFloat(local.x),
+                y: CGFloat(local.y),
+                width: CGFloat(local.width),
+                height: CGFloat(local.height)
+            )
         }
-        content.frame = NSRect(origin: .zero, size: bounds.size)
+        let frame = arranged.frame
+        content.frame = NSRect(x: 0, y: 0, width: CGFloat(frame.width), height: CGFloat(frame.height))
         panel.contentView = content
-        panel.setFrame(bounds, display: true)
+        panel.setFrame(
+            NSRect(
+                x: CGFloat(frame.x),
+                y: CGFloat(frame.y),
+                width: CGFloat(frame.width),
+                height: CGFloat(frame.height)
+            ),
+            display: true
+        )
         panel.orderFrontRegardless()
     }
 

@@ -138,7 +138,9 @@ public enum MouseButton: Equatable, Sendable {
 }
 
 public enum ActuatorEffect: Equatable, Sendable {
-    case accessibilityPress(elementID: String)
+    /// `fallback` is the accessibility-frame center. The poster uses it only
+    /// when `AXPress` is missing or returns an error.
+    case accessibilityPress(elementID: String, fallback: ActuatorPoint)
     case mouseClick(point: ActuatorPoint, button: MouseButton, modifiers: KeyModifiers)
     /// Pixel wheel event aimed at the pointer. Positive vertical is up.
     /// Positive horizontal is to the right. Same sign as a Quartz scroll wheel.
@@ -599,7 +601,7 @@ public final class ActionActuator: @unchecked Sendable {
             return .mouseClick(point: request.point, button: .left, modifiers: .command)
         case .plain:
             if request.canAccessibilityPress, let identifier = trimmed(request.elementID) {
-                return .accessibilityPress(elementID: identifier)
+                return .accessibilityPress(elementID: identifier, fallback: request.point)
             }
             return .mouseClick(point: request.point, button: .left, modifiers: [])
         }

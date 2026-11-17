@@ -10,7 +10,8 @@ import SupervimCore
 public enum MenuHookAssembly {
     public static func make(
         decider: EventInterpreter<SystemKeyClock>,
-        observer: any RuntimeObserving
+        observer: any RuntimeObserving,
+        misses: HintMissBanner = HintMissBanner()
     ) -> SupervimRuntime {
         let reader = AXSystemReader()
         let signals = AXFocusSignal()
@@ -24,7 +25,8 @@ public enum MenuHookAssembly {
             querier: pipeline.scanner,
             presenter: panel,
             actuator: actuator,
-            mode: decider
+            mode: decider,
+            misses: misses
         )
         let help = HelpController(presenter: panel)
         let snapshots = LockedCommandSnapshot(snapshot: .unavailable)

@@ -40,8 +40,8 @@ final class ActuatorTests: XCTestCase {
             ),
             poster: poster
         )
-        XCTAssertEqual(outcome, .performed([.accessibilityPress(elementID: "go")]))
-        XCTAssertEqual(poster.effects, [.accessibilityPress(elementID: "go")])
+        XCTAssertEqual(outcome, .performed([.accessibilityPress(elementID: "go", fallback: actuatorPoint(4, 8))]))
+        XCTAssertEqual(poster.effects, [.accessibilityPress(elementID: "go", fallback: actuatorPoint(4, 8))])
     }
 
     func testPlainClickWithoutPressUsesTheLeftButton() {

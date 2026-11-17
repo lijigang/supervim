@@ -50,10 +50,12 @@ public struct HintRect: Equatable, Sendable {
 public struct HintTarget: Equatable, Sendable {
     public var frame: HintRect
     public var identifier: String?
+    public var canAccessibilityPress: Bool
 
-    public init(frame: HintRect, identifier: String? = nil) {
+    public init(frame: HintRect, identifier: String? = nil, canAccessibilityPress: Bool = false) {
         self.frame = frame
         self.identifier = identifier
+        self.canAccessibilityPress = canAccessibilityPress
     }
 }
 
@@ -63,11 +65,22 @@ public struct HintMarker: Equatable, Sendable {
     public var index: Int
     public var text: String
     public var anchor: HintPoint
+    /// Accessibility frame size. The anchor is the top-left in accessibility space.
+    public var elementWidth: Double
+    public var elementHeight: Double
 
-    public init(index: Int, text: String, anchor: HintPoint) {
+    public init(
+        index: Int,
+        text: String,
+        anchor: HintPoint,
+        elementWidth: Double = 0,
+        elementHeight: Double = 0
+    ) {
         self.index = index
         self.text = text
         self.anchor = anchor
+        self.elementWidth = elementWidth
+        self.elementHeight = elementHeight
     }
 }
 
@@ -78,12 +91,20 @@ public struct HintActivation: Equatable, Sendable {
     public var click: HintClick
     public var point: HintPoint
     public var identifier: String?
+    public var canAccessibilityPress: Bool
 
-    public init(index: Int, click: HintClick, point: HintPoint, identifier: String?) {
+    public init(
+        index: Int,
+        click: HintClick,
+        point: HintPoint,
+        identifier: String?,
+        canAccessibilityPress: Bool = false
+    ) {
         self.index = index
         self.click = click
         self.point = point
         self.identifier = identifier
+        self.canAccessibilityPress = canAccessibilityPress
     }
 }
 
@@ -174,8 +195,9 @@ public struct HintSession: Sendable {
                 HintActivation(
                     index: index,
                     click: click,
-                    point: target.frame.center,
-                    identifier: target.identifier
+                    point: HintGeometry.clickPoint(element: target.frame),
+                    identifier: target.identifier,
+                    canAccessibilityPress: target.canAccessibilityPress
                 )
             )
         case .pending(let query):
@@ -197,7 +219,13 @@ public struct HintSession: Sendable {
                 return nil
             }
             let target = targets[label.index]
-            return HintMarker(index: label.index, text: label.displayText, anchor: target.frame.origin)
+            return HintMarker(
+                index: label.index,
+                text: label.displayText,
+                anchor: target.frame.origin,
+                elementWidth: target.frame.width,
+                elementHeight: target.frame.height
+            )
         }
     }
 }

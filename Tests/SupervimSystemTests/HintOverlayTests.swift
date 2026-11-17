@@ -30,7 +30,7 @@ final class HintOverlayTests: XCTestCase {
         _ = rig.controller.refreshClickables()
         let shown = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
         let presentation = OverlayPresentation(
-            markers: [HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20))],
+            markers: [HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6)],
             policy: OverlayWindowPolicy.hintLabels
         )
         XCTAssertEqual(shown, .showing(presentation))
@@ -96,8 +96,8 @@ final class HintOverlayTests: XCTestCase {
         let partial = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus))
         XCTAssertEqual(partial, .showing(OverlayPresentation(
             markers: [
-                HintMarker(index: 0, text: "AA", anchor: HintPoint(x: 0, y: 0)),
-                HintMarker(index: 9, text: "AS", anchor: HintPoint(x: 270, y: 0)),
+                HintMarker(index: 0, text: "AA", anchor: HintPoint(x: 0, y: 0), elementWidth: 20, elementHeight: 10),
+                HintMarker(index: 9, text: "AS", anchor: HintPoint(x: 270, y: 0), elementWidth: 20, elementHeight: 10),
             ],
             policy: .hintLabels
         )))
@@ -178,6 +178,54 @@ final class HintOverlayTests: XCTestCase {
         XCTAssertEqual(rig.presenter.hides, 1)
         XCTAssertEqual(rig.poster.effects, [])
         XCTAssertEqual(rig.interpreter.mode, .normal)
+    }
+
+    func testPressableElementClicksWithAXPressAtTheAccessibilityCenter() {
+        let box = ClickableElement(
+            role: "AXGroup",
+            actions: ["AXPress"],
+            frame: ElementFrame(x: -400, y: 100, width: 200, height: 40),
+            path: [1, 2]
+        )
+        let rig = makeRig(elements: [box])
+        _ = rig.controller.refreshClickables()
+        _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
+        let typed = rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus)
+        let point = ActuatorPoint(x: -300, y: 120)
+        let effect = ActuatorEffect.accessibilityPress(elementID: "1/2", fallback: point)
+        XCTAssertEqual(
+            rig.controller.consume(typed),
+            .activated(
+                HintActivation(
+                    index: 0,
+                    click: .plain,
+                    point: HintPoint(x: -300, y: 120),
+                    identifier: "1/2",
+                    canAccessibilityPress: true
+                ),
+                .performed([effect])
+            )
+        )
+        XCTAssertEqual(rig.poster.effects, [effect])
+    }
+
+    func testEmptyScanReportsThatNothingClickableWasFound() {
+        let misses = HintMissBanner(duration: 2)
+        let querier = ScriptedClickables(query: .elements(ClickableSnapshot(elements: [], truncated: false)))
+        let interpreter = EventInterpreter(clock: ManualKeyClock(), cache: safariFocus)
+        let controller = HintController(
+            querier: querier,
+            presenter: CapturedOverlay(),
+            actuator: ActionActuator(poster: ClickPoster()),
+            mode: interpreter,
+            misses: misses
+        )
+        _ = controller.refreshClickables()
+        let begin = interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
+        XCTAssertEqual(controller.consume(begin), .cancelled(.noTargets))
+        let now = Date()
+        XCTAssertEqual(misses.title(fallback: "Normal", now: now), HintMissBanner.message)
+        XCTAssertEqual(misses.title(fallback: "Normal", now: now.addingTimeInterval(3)), "Normal")
     }
 
     func testEmptySnapshotCancelsWithoutAClick() {
@@ -261,14 +309,17 @@ final class HintOverlayTests: XCTestCase {
         XCTAssertEqual(rig.presenter.hides, 1)
     }
 
-    func testPlainClickStaysALeftClickWhenTheElementOffersPress() {
+    func testPlainClickUsesAXPressWhenTheElementOffersIt() {
         var box = oneBox()
         box.actions = ["AXPress", "AXConfirm"]
         let rig = makeRig(elements: [box])
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus))
-        XCTAssertEqual(rig.poster.effects, [plainClick(x: 14, y: 23)])
+        XCTAssertEqual(
+            rig.poster.effects,
+            [.accessibilityPress(elementID: "2/0", fallback: ActuatorPoint(x: 14, y: 23))]
+        )
     }
 
     func testCommandModifiedLetterKeepsTheArmedPlainClick() {
@@ -325,7 +376,7 @@ final class HintOverlayTests: XCTestCase {
             return XCTFail("only the usable element should be labeled, got \(shown)")
         }
         XCTAssertEqual(presentation.markers, [
-            HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20)),
+            HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6),
         ])
         XCTAssertEqual(rig.poster.effects, [])
     }
@@ -458,7 +509,7 @@ final class HintOverlayTests: XCTestCase {
             }
         }
         let overlayText = try String(contentsOf: overlay, encoding: .utf8)
-        XCTAssertTrue(overlayText.contains("canAccessibilityPress: false"))
+        XCTAssertTrue(overlayText.contains("canAccessibilityPress: press"))
     }
 }
 
@@ -498,7 +549,6 @@ private func makeRig(elements: [ClickableElement]) -> HintRig {
 private func oneBox() -> ClickableElement {
     ClickableElement(
         role: "AXButton",
-        actions: ["AXPress"],
         frame: ElementFrame(x: 10, y: 20, width: 8, height: 6),
         path: [2, 0]
     )
@@ -508,7 +558,6 @@ private func tenBoxes() -> [ClickableElement] {
     (0..<10).map { index in
         ClickableElement(
             role: "AXLink",
-            actions: ["AXPress"],
             frame: ElementFrame(x: Double(index) * 30, y: 0, width: 20, height: 10),
             path: [index]
         )
