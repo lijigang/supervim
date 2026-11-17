@@ -8,6 +8,10 @@ Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard c
 
 **Task 13 replaces the menu-bar placeholder with the mode.** The status title is Normal, Insert, or Paused. Hint is shown as Normal. The menu can pause, resume, open settings, and quit. Pause is written to settings and restored on the next launch. The settings window can add the frontmost app, remove an exclusion, and toggle the launch-at-login preference. That preference is stored only; nothing registers a login item. The exclusion list still defaults to Terminal, iTerm, and Emacs, and a match passes every key through, including the pause chord. Task 8's focus scanner is in the library. The menu process does not start it and does not install the event tap. Once the tap is installed, a known non-editable focus would swallow commands, and this process does not perform those actions yet.
 
+**任务 10 为当前窗口里已经扫到的可点击元素显示透明、不抢焦点的标签。** `f` 键入完整标签后，在元素中心左键点击并关掉标签。`F` 用同一套标签，点击时按住 Command，不是右键菜单。Esc、无效输入、没有目标或扫描不可用都会取消，并且不点击。按键路径只读缓存，不在钩子里扫描辅助功能树。Safari、Finder 和系统设置上的 200ms 与 90% 覆盖率这次没有测量。菜单栏占位程序仍然不安装事件钩子。
+
+**Task 10 shows transparent, non-activating labels on clickable elements already scanned in the current window.** `f` clicks the center of an element with the left button once its full label is typed, then hides the labels. `F` uses the same labels and holds Command for the click. It is not a context menu. Escape, invalid input, no targets, or an unavailable scan all cancel without clicking. The key path reads a cache and does not scan the accessibility tree inside the hook. The 200ms and 90% coverage targets in Safari, Finder, and System Settings were not measured. The menu-bar placeholder still does not install the event tap.
+
 ## 文档 / Docs
 
 - [宪法 / Constitution](docs/constitution.md)
@@ -23,6 +27,7 @@ Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard c
 - [任务 7 测试记录 / Task 7 test evidence](docs/task7-test-evidence.md)
 - [任务 8 测试记录 / Task 8 test evidence](docs/task8-test-evidence.md)
 - [任务 9 测试记录 / Task 9 test evidence](docs/task9-test-evidence.md)
+- [任务 10 测试记录 / Task 10 test evidence](docs/task10-test-evidence.md)
 - [任务 13 测试记录 / Task 13 test evidence](docs/task13-test-evidence.md)
 
 规格文末单独列出了尚未能保证的平台行为。那些条目没有改写已批准的要求。
@@ -59,9 +64,9 @@ scripts/assemble-app.sh release
 
 ```text
 Package.swift                 SwiftPM 描述，macOS 13+，Swift 6
-Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings、EventInterpreter、MenuBarController
-Sources/SupervimSystem        系统适配。含菜单栏预检、UserDefaults、EventTap、AXScanner，以及 Actuator 和 macOS 上的 CGEvent 合成
-Sources/Supervim              菜单栏应用。模式菜单和设置窗口在 AppKit 里；逻辑在 MenuBarController。不安装事件钩子，也不启动 AXScanner
+Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings、EventInterpreter、MenuBarController、HintSession
+Sources/SupervimSystem        系统适配。含菜单栏预检、UserDefaults、EventTap、AXScanner、Actuator，以及标签浮层。macOS 上另有 CGEvent 合成和不激活面板
+Sources/Supervim              菜单栏应用。模式菜单和设置窗口在 AppKit 里；逻辑在 MenuBarController。不安装事件钩子，也不启动 AXScanner 或标签浮层
 App/Supervim/Info.plist       应用包清单，含 LSUIElement
 scripts/assemble-app.sh       组装未签名 .app
 Tests                         XCTest
@@ -74,8 +79,8 @@ docs                          已批准的中文宪法、规格、计划和任�
 
 ## CI
 
-推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、九个覆盖率脚本和 `scripts/assemble-app.sh`，并检查组装结果里的 `LSUIElement`。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift`、`EventTap.swift`、`Actuator.swift`、`AXScanner.swift` 和 `MenuBarController.swift` 的行覆盖率不低于 90%。`AXApplicationReader.swift`、`CGEventActuator.swift` 和菜单的 AppKit 胶水只在 macOS 上编译，不计入这个门槛。
+推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、十个覆盖率脚本和 `scripts/assemble-app.sh`，并检查组装结果里的 `LSUIElement`。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift`、`EventTap.swift`、`Actuator.swift`、`AXScanner.swift`、`MenuBarController.swift`、`HintSession.swift` 和 `HintOverlay.swift` 的行覆盖率不低于 90%。`AXApplicationReader.swift`、`CGEventActuator.swift`、`HintOverlayWindow.swift` 和菜单的 AppKit 胶水只在 macOS 上编译，不计入这个门槛。
 
 ## 工作流工具 / Workflow tools
 
-本仓库没有 spec-kit，也没有 task-master CLI。任务文件是按上游 schema 手写的，说明见 [任务文档](docs/tasks.md#task-master-格式)。测试记录写在 `docs/task1-test-evidence.md` 到 `docs/task13-test-evidence.md`。任务 10、11、12、14 的记录不在本分支。
+本仓库没有 spec-kit，也没有 task-master CLI。任务文件是按上游 schema 手写的，说明见 [任务文档](docs/tasks.md#task-master-格式)。测试记录写在 `docs/task1-test-evidence.md` 到 `docs/task13-test-evidence.md`。任务 11、12、14 的记录不在本分支。
