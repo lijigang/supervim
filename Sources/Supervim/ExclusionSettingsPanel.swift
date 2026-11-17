@@ -133,15 +133,19 @@ final class ExclusionSettingsPanel: NSWindowController, NSWindowDelegate {
     }
 }
 
-/// Menu-bar status, pause, and settings. When both permissions are granted,
-/// the shared interpreter starts the scanner and then the event tap.
+/// Menu-bar status, pause, settings, and the permission guide.
+/// When both permissions are granted, the shared interpreter starts the scanner and then the event tap.
 @MainActor
 final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettingsPanelDelegate {
     private var statusItem: NSStatusItem?
     private var settingsPanel: ExclusionSettingsPanel?
+    private var permissionPanel: PermissionGuidancePanel?
+    private var permissionWindowOpen = false
+    private var latestGuidance: PermissionGuidance?
     private let session: MenuBarController<SystemKeyClock>
     private let hookObserver: HookMenuObserver
     private let runtime: SupervimRuntime
+    private let launchGate: PermissionLaunchGate
 
     override init() {
         let session = MenuBarApplication.makeSession(frontmost: WorkspaceFrontmost())
@@ -149,6 +153,12 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
         self.session = session
         self.hookObserver = observer
         self.runtime = MenuHookAssembly.make(decider: session.keyDecider, observer: observer)
+        self.launchGate = PermissionLaunchGate(
+            guide: PermissionGuide(
+                status: SystemPermissionStatus(),
+                opener: WorkspacePrivacyPaneOpener()
+            )
+        )
         super.init()
         observer.onEvent = { [weak self] in
             Task { @MainActor in
@@ -161,8 +171,12 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
         _ = notification
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
-        _ = runtime.start()
-        installMenu()
+        syncPermissions(showWhenNeeded: true)
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        _ = notification
+        syncPermissions(showWhenNeeded: false)
     }
 
     private func refreshAfterHook() {
@@ -191,11 +205,22 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     }
 
     private func installMenu() {
+        if let latestGuidance {
+            installMenu(guidance: latestGuidance)
+        } else {
+            apply(launchGate.refresh(), showWhenNeeded: false)
+        }
+    }
+
+    private func installMenu(guidance: PermissionGuidance) {
         let menu = NSMenu()
         let snapshot = session.snapshot()
         statusItem?.button?.title = snapshot.statusTitle
         for command in snapshot.commands {
             if command.kind == .separator {
+                if guidance.isVisible {
+                    menu.addItem(permissionsItem(title: guidance.menuTitle))
+                }
                 menu.addItem(.separator())
                 continue
             }
@@ -210,6 +235,75 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
             menu.addItem(item)
         }
         statusItem?.menu = menu
+    }
+
+    private func permissionsItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: title,
+            action: #selector(permissionsClicked(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        return item
+    }
+
+    private func syncPermissions(showWhenNeeded: Bool) {
+        apply(launchGate.refresh(), showWhenNeeded: showWhenNeeded)
+    }
+
+    private func showPermissions(_ guidance: PermissionGuidance) {
+        let panel = permissionPanel ?? makePermissionPanel()
+        permissionPanel = panel
+        panel.render(guidance)
+        panel.present()
+        permissionWindowOpen = true
+    }
+
+    private func makePermissionPanel() -> PermissionGuidancePanel {
+        let panel = PermissionGuidancePanel(
+            onOpen: { [weak self] kind in
+                self?.openedPermission(kind)
+            },
+            onCheckAgain: { [weak self] in
+                self?.syncPermissions(showWhenNeeded: true)
+            }
+        )
+        panel.onClose = { [weak self] in
+            self?.permissionWindowOpen = false
+        }
+        return panel
+    }
+
+    private func openedPermission(_ kind: PermissionKind) {
+        apply(launchGate.openLink(kind), showWhenNeeded: true)
+    }
+
+    private func apply(_ step: PermissionLaunchStep, showWhenNeeded: Bool) {
+        let guidance = step.guidance
+        latestGuidance = guidance
+        installMenu(guidance: guidance)
+        if guidance.isVisible {
+            if showWhenNeeded || permissionWindowOpen {
+                showPermissions(guidance)
+            }
+            return
+        }
+        if permissionWindowOpen {
+            permissionPanel?.dismiss()
+            permissionWindowOpen = false
+        }
+        guard step.shouldStartRuntime else {
+            return
+        }
+        let started = runtime.start()
+        if started.monitoredFocus || started.installedHook {
+            launchGate.noteRuntimeStarted()
+        }
+    }
+
+    @objc private func permissionsClicked(_ sender: NSMenuItem) {
+        _ = sender
+        syncPermissions(showWhenNeeded: true)
     }
 
     @objc private func menuClicked(_ sender: NSMenuItem) {
