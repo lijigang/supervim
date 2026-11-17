@@ -6,7 +6,7 @@
 - Swift：6.4.2（swift-6.4.2-RELEASE），本机原先没有 Swift，这次用官方 Ubuntu 24.04 工具链解到 `/tmp/swift-install/swift-6.4.2-RELEASE-ubuntu24.04`，只为了跑纯逻辑测试
 - 没有 macOS，没有 Xcode，没有 AppKit
 
-因此下面能证明的是 Settings 的先失败、后通过，以及 Linux 上 `Settings.swift` 和 `UserDefaultsSettingsStore.swift` 的覆盖率。不能证明登录项真的注册了，也不能证明前台应用会被放过。那是任务 13 和任务 7。macOS 上的同一组测试和覆盖率交给 GitHub Actions。本文写完时，那次 CI 还没有结果；PR 说明里的检查状态才是实际结果。
+因此下面能证明的是 Settings 的先失败、后通过，以及 Linux 上 `Settings.swift` 和 `UserDefaultsSettingsStore.swift` 的覆盖率。不能证明登录项真的注册了，也不能证明前台应用会被放过。那是任务 13 和任务 7。macOS 上的同一组测试和覆盖率交给 GitHub Actions。第一次 macOS 运行失败了，原因和改名见文末。改名之后的那次 macOS 运行，以 PR 上的检查状态为准。
 
 ## 范围
 
@@ -176,10 +176,40 @@ UserDefaultsSettingsStore.swift function coverage: 100.00% (3/3)
 12. **`yy` 的 bundle id 仍然不写进代码。** 规格的歧义说明把排除列表和 `yy` 的标识都交给任务 6 和任务 11。本任务只把排除列表的三个标识写进设置。`yy` 仍沿用任务 5：承诺的应用名是 Safari 和 Chromium，下面这些标识都没有写进代码，也没有经过所有者确认：Safari `com.apple.Safari`；Chrome `com.google.Chrome`；Chromium `org.chromium.Chromium`；Edge `com.microsoft.edgemac`；Brave `com.brave.Browser`；Arc `company.thebrowser.Browser`；Opera `com.operasoftware.Opera`；Vivaldi `com.vivaldi.Vivaldi`。「Chromium」是否包含 Chrome、Edge、Brave，留给任务 11。
 13. **设置不联网，也不记录击键。** 暂停快捷键是一条配置，不是按键历史。源码扫描拒绝网络、日志和登录项注册这些调用。
 
+## macOS CI：测试辅助函数和 XCTest 重名
+
+第一次 macOS 运行：<https://github.com/lijigang/supervim/actions/runs/44027898745>，作业 <https://github.com/lijigang/supervim/actions/runs/44027898745/job/133852566056>。提交 `742e745`。`swift build` 之后的 Test 步骤失败，退出码 1。Linux 上同一份测试能编译，因为这台机器的 XCTest 没有把无参的 `load()` 加到测试实例上。
+
+Apple 的 XCTest 给 `SettingsTests` 一个不带参数的实例方法 `load()`。测试文件里的自由函数 `load(_:)` 因此对不上。代表错误：
+
+```text
+Tests/SupervimCoreTests/SettingsTests.swift:266:26: error: static member 'load' cannot be used on instance of type 'SettingsTests'
+Tests/SupervimCoreTests/SettingsTests.swift:266:31: error: argument passed to call that takes no arguments
+Tests/SupervimCoreTests/SettingsTests.swift:271:26: error: static member 'load' cannot be used on instance of type 'SettingsTests'
+Tests/SupervimCoreTests/SettingsTests.swift:376:25: error: static member 'load' cannot be used on instance of type 'SettingsTests'
+Tests/SupervimCoreTests/SettingsTests.swift:408:30: error: static member 'load' cannot be used on instance of type 'SettingsTests'
+Tests/SupervimCoreTests/SettingsTests.swift:482:26: error: static member 'load' cannot be used on instance of type 'SettingsTests'
+Tests/SupervimCoreTests/SettingsTests.swift:487:28: error: static member 'load' cannot be used on instance of type 'SettingsTests'
+```
+
+后面的 `Any` 不能比较、`.default` 找不到、`control` 缺少类型，都是这一处解析失败带出来的，不是设置模型的行为错误。
+
+改法只在测试里：那个辅助函数改名为 `loadSettings`。`SettingsRepository.load()` 和生产 API 没有改。调用点是 266、271、376、377、408、482、487 行。
+
+改名之后在 Linux 上再跑 `swift test --filter SettingsTests`。时间：2026-11-17 06:01:41 UTC 到 06:01:44 UTC。退出码 0。没有编译警告。
+
+```text
+Test Suite 'SettingsTests' passed at 2026-11-17 06:01:44.210
+	 Executed 36 tests, with 0 failures (0 unexpected) in 0.018 (0.018) seconds
+```
+
+这只证明 Linux 仍能编译并跑过这些断言。macOS 是否不再撞上 `load()`，看改名之后的 `macos-latest` 运行。
+
 ## 没有测的东西
 
-- 没有在 macOS 上编译或运行
+- 没有在这台 Linux 机器上编译或运行 AppKit
 - 没有把设置接到菜单、事件钩子或 KeyParser
 - 没有注册登录项，也没有读本机真实的偏好域
 - 没有测量 CPU、内存或 `f` 的延迟
 - 没有按 bundle id 过滤 `yy`
+- 第一次 macOS CI 在测试编译阶段失败，没有跑到设置断言

@@ -263,12 +263,12 @@ final class SettingsTests: XCTestCase {
             "excludedApplications": [String](),
             "pauseHotkey": "control+option+v",
         ])
-        let loaded = try load(data)
+        let loaded = try loadSettings(data)
         XCTAssertEqual(loaded.excludedBundleIdentifiers, [])
     }
 
     func testLegacyMissingFieldsUseDefaults() throws {
-        let loaded = try load(try plist(["pauseHotkey": "ctrl+option+v"]))
+        let loaded = try loadSettings(try plist(["pauseHotkey": "ctrl+option+v"]))
         XCTAssertEqual(loaded.excludedBundleIdentifiers, Settings.defaultExcludedBundleIdentifiers)
         XCTAssertEqual(loaded.pauseShortcut, .default)
         XCTAssertFalse(loaded.isPaused)
@@ -373,8 +373,8 @@ final class SettingsTests: XCTestCase {
             ])
             assertRejected(data, .timeoutOutOfRange(value))
         }
-        let lower = try load(try plist(["schemaVersion": 1, "keySequenceTimeoutMilliseconds": 1]))
-        let upper = try load(try plist(["schemaVersion": 1, "keySequenceTimeoutMilliseconds": 60_000]))
+        let lower = try loadSettings(try plist(["schemaVersion": 1, "keySequenceTimeoutMilliseconds": 1]))
+        let upper = try loadSettings(try plist(["schemaVersion": 1, "keySequenceTimeoutMilliseconds": 60_000]))
         XCTAssertEqual(lower.keySequenceTimeoutMilliseconds, 1)
         XCTAssertEqual(upper.keySequenceTimeoutMilliseconds, 60_000)
     }
@@ -405,7 +405,7 @@ final class SettingsTests: XCTestCase {
             xmlPlist("<key>schemaVersion</key><integer>1</integer><key>excludedBundleIdentifiers</key><array><integer>1</integer></array>"),
             .invalidStringArray("excludedBundleIdentifiers")
         )
-        let hyphenated = try load(try plist([
+        let hyphenated = try loadSettings(try plist([
             "schemaVersion": 1,
             "excludedBundleIdentifiers": ["com.apple.term-inal", "a.b"],
         ]))
@@ -479,12 +479,12 @@ final class SettingsTests: XCTestCase {
                 "modifiers": ["shift", "command", "control", "option"],
             ],
         ])
-        let loaded = try load(data)
+        let loaded = try loadSettings(data)
         XCTAssertEqual(
             loaded.pauseShortcut,
             PauseShortcut(key: "k", modifiers: [.control, .option, .command, .shift])
         )
-        let accented = try load(try plist([
+        let accented = try loadSettings(try plist([
             "schemaVersion": 1,
             "pauseShortcut": [
                 "key": "é",
@@ -692,7 +692,7 @@ private final class ThrowingSettingsStore: SettingsStore, @unchecked Sendable {
     }
 }
 
-private func load(_ data: Data) throws -> Settings {
+private func loadSettings(_ data: Data) throws -> Settings {
     try SettingsRepository(store: InMemorySettingsStore(data: data)).load()
 }
 
