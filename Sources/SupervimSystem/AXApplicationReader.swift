@@ -74,7 +74,7 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
             role: copyString(element, kAXRoleAttribute),
             subrole: copyString(element, kAXSubroleAttribute),
             actions: copyActions(element),
-            editableAttribute: copyBool(element, "AXEditable"),
+            editableAttribute: copyBool(element, "AXEditable" as CFString),
             frame: copyFrame(element)
         )
     }
@@ -276,18 +276,18 @@ private func axFocusNotification(
 }
 
 private func copyElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
-    guard let value = copyAttribute(element, attribute) else {
+    guard let value = copyAttribute(element, attribute as CFString) else {
         return nil
     }
     guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
         return nil
     }
-    return unsafeDowncast(value, to: AXUIElement.self)
+    return unsafeBitCast(value, to: AXUIElement.self)
 }
 
-private func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+private func copyAttribute(_ element: AXUIElement, _ attribute: CFString) -> CFTypeRef? {
     var value: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+    let error = AXUIElementCopyAttributeValue(element, attribute, &value)
     guard error == .success else {
         return nil
     }
@@ -295,13 +295,13 @@ private func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTyp
 }
 
 private func copyString(_ element: AXUIElement, _ attribute: String) -> String? {
-    guard let value = copyAttribute(element, attribute) else {
+    guard let value = copyAttribute(element, attribute as CFString) else {
         return nil
     }
     return value as? String
 }
 
-private func copyBool(_ element: AXUIElement, _ attribute: String) -> Bool? {
+private func copyBool(_ element: AXUIElement, _ attribute: CFString) -> Bool? {
     guard let value = copyAttribute(element, attribute) else {
         return nil
     }
@@ -317,15 +317,15 @@ private func copyActions(_ element: AXUIElement) -> [String] {
 }
 
 private func copyChildren(_ element: AXUIElement) -> [AXUIElement] {
-    guard let value = copyAttribute(element, kAXChildrenAttribute) else {
+    guard let value = copyAttribute(element, kAXChildrenAttribute as CFString) else {
         return []
     }
     return value as? [AXUIElement] ?? []
 }
 
 private func copyFrame(_ element: AXUIElement) -> ElementFrame? {
-    guard let position = copyAttribute(element, kAXPositionAttribute),
-          let size = copyAttribute(element, kAXSizeAttribute),
+    guard let position = copyAttribute(element, kAXPositionAttribute as CFString),
+          let size = copyAttribute(element, kAXSizeAttribute as CFString),
           let point = copyPoint(position),
           let cgSize = copySize(size)
     else {

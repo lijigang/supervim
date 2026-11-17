@@ -118,7 +118,7 @@ AXApplicationReader.swift:282:18: error: conditional downcast to CoreFoundation 
 
 另外两处是警告：`unsafeBitCast` 到 `AXValue` 应改成 `unsafeDowncast`。公开 SDK 里没有 `kAXEditableAttribute` 这个常量；属性名仍是 `AXEditable`。`AXUIElement` 在 Swift 6 里不能用 `as?` 从任意 CF 值转出来，要先比 `CFGetTypeID`。
 
-改法只在 macOS 适配里：可编辑属性用字符串 `AXEditable`；元素和 `AXValue` 在类型号一致后再 `unsafeDowncast`。分类、缓存和测试期望没有改。Linux 上这个文件不编译，所以不能在这里证明 macOS 已经通过。改完之后的 `swift test --filter AXScannerTests` 只证明源码扫描和分类测试仍然通过。macOS 是否编译通过，看这一次之后的 `macos-latest` 运行。
+改法只在 macOS 适配里：可编辑属性写成 `"AXEditable" as CFString`；元素先比 `CFGetTypeID` 和 `AXUIElementGetTypeID()`，再用 `unsafeBitCast`。`AXValue` 仍用 `unsafeDowncast`，因为上一轮编译把它标成可以替换 `unsafeBitCast` 的警告。分类、缓存和测试期望没有改。Linux 上这个文件不编译，所以不能在这里证明 macOS 已经通过。改完之后的 `swift test --filter AXScannerTests` 只证明源码扫描和分类测试仍然通过。macOS 是否编译通过，看这一次之后的 `macos-latest` 运行。
 
 任务 9 在这次失败的同时合并进了 `main`（`2b9fde2`）。本分支变基到那次提交上，任务 8 和任务 9 的状态都保持 `done`。变基之后在 Linux 上再跑 `swift test`。时间：2026-11-17 06:57:30 UTC 到 06:57:36 UTC。退出码 0。系统测试 128 个（含 `AXScannerTests` 44 个、`ActuatorTests` 40 个、`EventTapTests` 29 个），核心测试 266 个，合计 394 个 XCTest，0 失败。覆盖率数字仍是变基前那一轮，因为 `AXScanner.swift` 没有改。
 
