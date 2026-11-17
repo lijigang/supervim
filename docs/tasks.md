@@ -2,7 +2,7 @@
 
 批准顺序如下。依赖没有满足时，不开始该任务。一个任务一个 PR，评审和所有者确认之后再进入下一个。
 
-任务 1 到任务 9 已合并，状态是 `done`。任务 10、11、12、13 和 14 已实现，状态是 `done`。任务 15 是 `pending`。机器可读的同一份数据在 [`.taskmaster/tasks/tasks.json`](../.taskmaster/tasks/tasks.json)。
+任务 1 到任务 15 已实现，状态是 `done`。机器可读的同一份数据在 [`.taskmaster/tasks/tasks.json`](../.taskmaster/tasks/tasks.json)。
 
 `priority` 只是 task-master 的字段。任务 1 标成 `high`，其余标成 `medium`。执行顺序以依赖为准，不表示其余任务可选。
 
@@ -51,7 +51,7 @@
 | 12 | 快捷键帮助 | 10 | done |
 | 13 | 菜单栏、暂停、设置与排除列表 | 6、7 | done |
 | 14 | 权限引导 | 13 | done |
-| 15 | 未签名 DMG、Release 与手工验收 | 10、11、12、13、14 | pending |
+| 15 | 未签名 DMG、Release 与手工验收 | 10、11、12、13、14 | done |
 
 ## task-master 格式
 

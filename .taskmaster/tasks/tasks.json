@@ -164,7 +164,7 @@
         "id": 15,
         "title": "未签名 DMG、Release 与手工验收",
         "description": "用 create-dmg 和 GitHub Releases 发布未签名磁盘映像，并补上手工验收说明。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [10, 11, 12, 13, 14],
         "priority": "medium",
         "details": "在打 tag 时构建 macOS 应用，用 create-dmg 生成未签名 DMG，上传 GitHub Release。DMG 支持拖到应用程序文件夹。登录启动若规格中的可选项在此时实现，必须尊重任务 6 的偏好。README 要写未签名首次打开的方法，以及重复构建可能要重新授予权限的风险。Safari、Finder、系统设置的提示延迟和覆盖率，以及微信、备忘录、Safari 地址栏不吞字，都在本任务做手工验收；做不到的指标保持未测，不改规格。签名和公证不在初始范围内。",
