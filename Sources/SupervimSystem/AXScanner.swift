@@ -123,15 +123,24 @@ public enum FocusClassification {
     ) -> (snapshot: ClickableSnapshot, visited: Int) {
         var elements: [ClickableElement] = []
         var visited = 0
+        var viewports: [HintRect] = []
+        let windowRect = window.frame.map(hintRect)
         let truncated = walk(window, limits: limits) { visit in
             visited += 1
-            if !visit.isRoot, isClickable(visit.node), isOnScreen(visit.node, windowFrame: window.frame) {
+            if let frame = visit.node.frame, isViewport(visit.node) {
+                let rect = hintRect(frame)
+                if rect.isUsable {
+                    viewports.append(rect)
+                }
+            }
+            if !visit.isRoot, isClickable(visit.node), let raw = visit.node.frame.map(hintRect),
+               let visible = HintGeometry.visibleElement(raw, window: windowRect, viewports: viewports) {
                 elements.append(
                     ClickableElement(
                         role: visit.node.role,
                         subrole: visit.node.subrole,
                         actions: visit.node.actions,
-                        frame: visit.node.frame ?? ElementFrame(x: 0, y: 0, width: 0, height: 0),
+                        frame: elementFrame(visible),
                         path: visit.path
                     )
                 )
@@ -141,34 +150,55 @@ public enum FocusClassification {
         return (ClickableSnapshot(elements: elements, truncated: truncated), visited)
     }
 
-    public static func firstEditableInput(
+    static func editableCandidates(
         in window: AccessibilityElement,
-        limits: TreeWalkLimits
-    ) -> EditableInputQuery {
-        var found: EditableInputTarget?
+        limits: TreeWalkLimits,
+        inFocusedWindow: Bool
+    ) -> (candidates: [InputCandidate], truncated: Bool) {
+        var candidates: [InputCandidate] = []
+        var viewports: [HintRect] = []
+        let windowRect = window.frame.map(hintRect)
         let truncated = walk(window, limits: limits) { visit in
-            if found != nil || visit.holeBefore {
-                return found != nil
+            if let frame = visit.node.frame, isViewport(visit.node) {
+                let rect = hintRect(frame)
+                if rect.isUsable {
+                    viewports.append(rect)
+                }
             }
             guard !visit.isRoot,
                   editability(of: visit.node) == .editable,
-                  isOnScreen(visit.node, windowFrame: window.frame),
-                  let frame = visit.node.frame
+                  InputChoice.isTextInput(role: visit.node.role, subrole: visit.node.subrole),
+                  let raw = visit.node.frame.map(hintRect),
+                  let visible = HintGeometry.visibleElement(raw, window: windowRect, viewports: viewports)
             else {
                 return false
             }
-            found = EditableInputTarget(
-                role: visit.node.role,
-                subrole: visit.node.subrole,
-                frame: frame,
-                path: visit.path
+            candidates.append(
+                InputCandidate(
+                    role: visit.node.role,
+                    subrole: visit.node.subrole,
+                    frame: visible,
+                    path: visit.path,
+                    editable: true,
+                    identity: visit.node.identity,
+                    inFocusedWindow: inFocusedWindow
+                )
             )
-            return true
+            return false
         }
-        if let found {
-            return .found(found)
-        }
-        return truncated ? .unavailable : .none
+        return (candidates, truncated)
+    }
+
+    private static func isViewport(_ element: AccessibilityElement) -> Bool {
+        element.role == "AXScrollArea" || element.role == "AXWebArea"
+    }
+
+    private static func hintRect(_ frame: ElementFrame) -> HintRect {
+        HintRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
+    }
+
+    private static func elementFrame(_ rect: HintRect) -> ElementFrame {
+        ElementFrame(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
     }
 
     private static let textRoles: Set<String> = [
@@ -309,22 +339,6 @@ public enum FocusClassification {
         return false
     }
 
-    private static func isOnScreen(_ element: AccessibilityElement, windowFrame: ElementFrame?) -> Bool {
-        guard let frame = element.frame, frame.width > 0, frame.height > 0 else {
-            return false
-        }
-        guard let windowFrame else {
-            return true
-        }
-        guard windowFrame.width > 0, windowFrame.height > 0 else {
-            return false
-        }
-        let left = max(frame.x, windowFrame.x)
-        let right = min(frame.x + frame.width, windowFrame.x + windowFrame.width)
-        let top = max(frame.y, windowFrame.y)
-        let bottom = min(frame.y + frame.height, windowFrame.y + windowFrame.height)
-        return right - left > 0 && bottom - top > 0
-    }
 }
 
 public struct ClickableElement: Equatable, Sendable {
@@ -608,6 +622,16 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
             }
         }
         let milliseconds = Int((Date().timeIntervalSince(started) * 1000).rounded())
+        if let root = picked.root {
+            let summary = AccessibilityTreeSummary.counts(in: root, limits: limits)
+            ModeTrace.noteLine(AccessibilityTreeSummary.line(
+                bundle: bundle,
+                nodes: summary.nodes,
+                roles: summary.roles
+            ))
+        } else {
+            ModeTrace.noteLine(AccessibilityTreeSummary.line(bundle: bundle, nodes: 0, roles: [:]))
+        }
         ModeTrace.noteHintScan(
             bundleIdentifier: bundle,
             window: picked.window,
@@ -655,7 +679,8 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
                     visited: counted.visited,
                     hits: counted.snapshot.elements.count,
                     window: "application",
-                    found: 1
+                    found: 1,
+                    root: application
                 )
             }
         }
@@ -674,7 +699,8 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
                 visited: counted.visited,
                 hits: counted.snapshot.elements.count,
                 window: choice.source,
-                found: 1
+                found: 1,
+                root: element
             )
             if candidate.hits > 0 {
                 return candidate
@@ -686,7 +712,7 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
         if let fallback {
             return fallback
         }
-        return ScanPick(query: .unavailable, visited: 0, hits: 0, window: "missing", found: 0)
+        return ScanPick(query: .unavailable, visited: 0, hits: 0, window: "missing", found: 0, root: nil)
     }
 
     private func frontmostBundle() -> String {
@@ -700,26 +726,57 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
 
     public func firstEditableInput() -> EditableInputQuery {
         let choices = reader.readWindowChoices(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth)
-        var fallback: EditableInputQuery?
+        let lastFocused = cache.currentFocus().elementIdentity
+        var candidates: [InputCandidate] = []
+        var sawWindow = false
+        var truncated = false
         for choice in choices {
             guard choice.found, let element = choice.element else {
                 continue
             }
-            let query = FocusClassification.firstEditableInput(in: element, limits: limits)
-            if case .found = query {
-                return query
+            sawWindow = true
+            let found = FocusClassification.editableCandidates(
+                in: element,
+                limits: limits,
+                inFocusedWindow: choice.source == "focused" || choice.source == "application"
+            )
+            candidates.append(contentsOf: found.candidates)
+            if found.truncated {
+                truncated = true
             }
-            if fallback == nil {
-                fallback = query
+        }
+        if candidates.isEmpty,
+           let application = reader.readApplicationElement(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth) {
+            sawWindow = true
+            let found = FocusClassification.editableCandidates(
+                in: application,
+                limits: limits,
+                inFocusedWindow: true
+            )
+            candidates.append(contentsOf: found.candidates)
+            if found.truncated {
+                truncated = true
             }
         }
-        if let fallback {
-            return fallback
+        if let best = InputChoice.best(candidates, lastFocusedIdentity: lastFocused, window: nil) {
+            return .found(
+                EditableInputTarget(
+                    role: best.role,
+                    subrole: best.subrole,
+                    frame: ElementFrame(
+                        x: best.frame.x,
+                        y: best.frame.y,
+                        width: best.frame.width,
+                        height: best.frame.height
+                    ),
+                    path: best.path
+                )
+            )
         }
-        if let application = reader.readApplicationElement(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth) {
-            return FocusClassification.firstEditableInput(in: application, limits: limits)
+        if !sawWindow || truncated {
+            return .unavailable
         }
-        return .unavailable
+        return .none
     }
 
     private func classifiedFocus() -> CachedFocus {
@@ -805,6 +862,7 @@ private struct ScanPick {
     var hits: Int
     var window: String
     var found: Int
+    var root: AccessibilityElement?
 }
 
 private struct WalkVisit {

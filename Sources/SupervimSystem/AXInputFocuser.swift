@@ -6,17 +6,28 @@ import Foundation
 ///
 /// The element is stored by the child-index path from the window root.
 /// A missing path returns false. This does not search the tree and does not
-/// focus a different control. Whether `AXFocusedUIElement` on the system-wide
-/// element moves a real Safari or Notes field is unverified.
+/// focus a different control. Focus is `AXFocused = true` on the element.
+/// Whether that moves a real Safari or Notes field is unverified. The session
+/// clicks the field when this returns false.
 public final class AXInputFocuser: InputFocusing, @unchecked Sendable {
     private let lock = NSLock()
     private var elements: [FocusPath: AXUIElement] = [:]
 
     public init() {}
 
-    public func bind(_ element: AXUIElement, path: [Int]) {
+    public func resetInputs() {
         lock.lock()
-        elements[FocusPath(path)] = element
+        elements.removeAll()
+        lock.unlock()
+    }
+
+    /// Keeps the first element for a path. The focused window is copied first.
+    public func bindInput(_ element: AXUIElement, path: [Int]) {
+        let key = FocusPath(path)
+        lock.lock()
+        if elements[key] == nil {
+            elements[key] = element
+        }
         lock.unlock()
     }
 
@@ -30,11 +41,10 @@ public final class AXInputFocuser: InputFocusing, @unchecked Sendable {
         guard CFGetTypeID(element) == AXUIElementGetTypeID() else {
             return false
         }
-        let system = AXUIElementCreateSystemWide()
         let error = AXUIElementSetAttributeValue(
-            system,
-            kAXFocusedUIElementAttribute as CFString,
-            element
+            element,
+            kAXFocusedAttribute as CFString,
+            kCFBooleanTrue
         )
         return error == .success
     }

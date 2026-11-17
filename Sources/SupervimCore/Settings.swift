@@ -52,24 +52,36 @@ public struct Settings: Equatable, Sendable {
     public static let minimumKeySequenceTimeoutMilliseconds = 1
     public static let maximumKeySequenceTimeoutMilliseconds = 60_000
 
+    /// Apps whose accessibility tree is not enough for `f`. Vision runs for
+    /// these bundle ids even when the tree has some hits. An empty saved list
+    /// disables that extra pass. A missing key keeps this default.
+    /// WeChat for Mac is `com.tencent.xinWeChat`. That choice is not in the
+    /// original spec; the accessibility tree of that app is empty.
+    public static let defaultVisionBundleIdentifiers = [
+        "com.tencent.xinWeChat",
+    ]
+
     public var isPaused: Bool
     public var excludedBundleIdentifiers: [String]
     public var launchAtLogin: Bool
     public var keySequenceTimeoutMilliseconds: Int
     public var pauseShortcut: PauseShortcut
+    public var visionBundleIdentifiers: [String]
 
     public init(
         isPaused: Bool,
         excludedBundleIdentifiers: [String],
         launchAtLogin: Bool,
         keySequenceTimeoutMilliseconds: Int,
-        pauseShortcut: PauseShortcut
+        pauseShortcut: PauseShortcut,
+        visionBundleIdentifiers: [String] = Settings.defaultVisionBundleIdentifiers
     ) {
         self.isPaused = isPaused
         self.excludedBundleIdentifiers = excludedBundleIdentifiers
         self.launchAtLogin = launchAtLogin
         self.keySequenceTimeoutMilliseconds = keySequenceTimeoutMilliseconds
         self.pauseShortcut = pauseShortcut
+        self.visionBundleIdentifiers = visionBundleIdentifiers
     }
 
     public static let defaults = Settings(
@@ -77,7 +89,8 @@ public struct Settings: Equatable, Sendable {
         excludedBundleIdentifiers: defaultExcludedBundleIdentifiers,
         launchAtLogin: false,
         keySequenceTimeoutMilliseconds: defaultKeySequenceTimeoutMilliseconds,
-        pauseShortcut: .default
+        pauseShortcut: .default,
+        visionBundleIdentifiers: defaultVisionBundleIdentifiers
     )
 
     /// Whether Supervim must leave this frontmost app alone.
@@ -181,6 +194,7 @@ private enum SettingsCodec {
         "launchAtLogin",
         "keySequenceTimeoutMilliseconds",
         "pauseShortcut",
+        "visionBundleIdentifiers",
     ]
 
     private static let legacyKeys: Set<String> = [
@@ -236,6 +250,7 @@ private enum SettingsCodec {
             "launchAtLogin": normalized.launchAtLogin,
             "keySequenceTimeoutMilliseconds": normalized.keySequenceTimeoutMilliseconds,
             "pauseShortcut": shortcut,
+            "visionBundleIdentifiers": normalized.visionBundleIdentifiers,
         ]
         return try PropertyListSerialization.data(fromPropertyList: document, format: .xml, options: 0)
     }
@@ -247,7 +262,8 @@ private enum SettingsCodec {
             excludedBundleIdentifiers: try bundleIdentifiers(in: document, legacyNames: false),
             launchAtLogin: try bool(in: document, key: "launchAtLogin", default: false),
             keySequenceTimeoutMilliseconds: try timeout(in: document),
-            pauseShortcut: try versionOneShortcut(in: document)
+            pauseShortcut: try versionOneShortcut(in: document),
+            visionBundleIdentifiers: try visionBundles(in: document)
         )
     }
 
@@ -258,7 +274,8 @@ private enum SettingsCodec {
             excludedBundleIdentifiers: try bundleIdentifiers(in: document, legacyNames: true),
             launchAtLogin: try bool(in: document, key: "launchAtLogin", default: false),
             keySequenceTimeoutMilliseconds: try timeout(in: document),
-            pauseShortcut: try legacyShortcut(in: document)
+            pauseShortcut: try legacyShortcut(in: document),
+            visionBundleIdentifiers: Settings.defaultVisionBundleIdentifiers
         )
     }
 
@@ -271,7 +288,11 @@ private enum SettingsCodec {
             ),
             launchAtLogin: settings.launchAtLogin,
             keySequenceTimeoutMilliseconds: try validatedTimeout(settings.keySequenceTimeoutMilliseconds),
-            pauseShortcut: try validatedShortcut(settings.pauseShortcut)
+            pauseShortcut: try validatedShortcut(settings.pauseShortcut),
+            visionBundleIdentifiers: try canonicalBundleIdentifiers(
+                settings.visionBundleIdentifiers,
+                legacyNames: false
+            )
         )
     }
 
@@ -321,6 +342,16 @@ private enum SettingsCodec {
             throw SettingsError.timeoutOutOfRange(value)
         }
         return value
+    }
+
+    private static func visionBundles(in document: [String: Any]) throws -> [String] {
+        guard let raw = document["visionBundleIdentifiers"] else {
+            return Settings.defaultVisionBundleIdentifiers
+        }
+        guard let items = stringArray(from: raw) else {
+            throw SettingsError.invalidStringArray("visionBundleIdentifiers")
+        }
+        return try canonicalBundleIdentifiers(items, legacyNames: false)
     }
 
     private static func bundleIdentifiers(in document: [String: Any], legacyNames: Bool) throws -> [String] {

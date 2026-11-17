@@ -40,6 +40,32 @@ final class PermissionGuideTests: XCTestCase {
         XCTAssertFalse(guidance.body.contains(accessibilityLink.destination))
     }
 
+    func testScreenRecordingAloneDoesNotOpenTheGuide() {
+        let guide = makeGuide(status: PermissionStatus(
+            accessibility: .granted,
+            inputMonitoring: .granted,
+            screenRecording: .missing
+        ))
+        assertHidden(guide.refresh())
+    }
+
+    func testAMissingRequiredPermissionAlsoOffersScreenRecording() {
+        let guide = makeGuide(status: PermissionStatus(
+            accessibility: .missing,
+            inputMonitoring: .granted,
+            screenRecording: .missing
+        ))
+        let guidance = guide.refresh()
+        XCTAssertTrue(guidance.isVisible)
+        XCTAssertEqual(guidance.links.map(\.kind), [.accessibility, .screenRecording])
+        XCTAssertTrue(guidance.body.contains("Screen Recording is optional"))
+        XCTAssertTrue(guidance.body.contains("Turn on Screen Recording"))
+        XCTAssertEqual(
+            guidance.links[1].destination,
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
+        )
+    }
+
     func testBothGrantedHidesGuidance() {
         let guide = makeGuide(status: .complete)
         assertHidden(guide.refresh())
@@ -385,6 +411,8 @@ private func expectedBody(_ lead: String) -> String {
     If Supervim is already in that list but this copy still has no permission, the old row belongs to a previous build. Select it, click the minus button to remove it, then add this Supervim and turn it on. That is required once when moving from an ad-hoc build to a build signed with the stable identity. Later upgrades keep the same signing certificate, so the grant stays.
 
     Granting a permission does not guarantee that this process receives it without quitting and reopening Supervim. Whether that happens depends on the system version and whether the permission database refreshes. It is not verified.
+
+    Screen Recording is optional. Supervim asks for it the first time an app has no accessibility elements to label. The capture stays on this Mac and is not uploaded.
     """
 }
 

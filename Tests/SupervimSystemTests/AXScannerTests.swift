@@ -795,8 +795,8 @@ final class AXScannerTests: XCTestCase {
 
         XCTAssertEqual(snapshot.elements.map(\.path), [[0], [3]])
         XCTAssertEqual(snapshot.elements.map(\.frame), [
-            inside,
-            ElementFrame(x: 80, y: 80, width: 30, height: 30),
+            ElementFrame(x: 100, y: 100, width: 10, height: 10),
+            ElementFrame(x: 100, y: 100, width: 10, height: 10),
         ])
         XCTAssertFalse(snapshot.truncated)
     }
@@ -874,9 +874,9 @@ final class AXScannerTests: XCTestCase {
             fixture.pipeline.scanner.firstEditableInput(),
             .found(
                 EditableInputTarget(
-                    role: "AXTextField",
-                    frame: ElementFrame(x: 12, y: 12, width: 40, height: 18),
-                    path: [3, 0]
+                    role: "AXTextArea",
+                    frame: ElementFrame(x: 12, y: 80, width: 40, height: 40),
+                    path: [4]
                 )
             )
         )
@@ -902,9 +902,9 @@ final class AXScannerTests: XCTestCase {
             fixture.pipeline.scanner.firstEditableInput(),
             .found(
                 EditableInputTarget(
-                    role: "AXGroup",
-                    frame: ElementFrame(x: 8, y: 8, width: 100, height: 40),
-                    path: [0]
+                    subrole: "AXSearchField",
+                    frame: ElementFrame(x: 8, y: 60, width: 100, height: 24),
+                    path: [1]
                 )
             )
         )
@@ -967,7 +967,11 @@ final class AXScannerTests: XCTestCase {
             ])
         )
 
-        XCTAssertEqual(fixture.pipeline.scanner.firstEditableInput(), .unavailable)
+        guard case .found(let target) = fixture.pipeline.scanner.firstEditableInput() else {
+            return XCTFail("a visible field after a truncated container is still a candidate")
+        }
+        XCTAssertEqual(target.path, [1])
+        XCTAssertEqual(target.role, "AXTextField")
     }
 
     func testTruncationAfterTheFirstFieldStillReturnsThatField() {
@@ -1128,6 +1132,21 @@ final class AXScannerTests: XCTestCase {
         XCTAssertTrue(text.contains("AXFocusedUIElementChanged"))
         XCTAssertTrue(text.contains("didActivateApplicationNotification"))
         XCTAssertTrue(text.contains("kAXChildrenAttribute") || text.contains("\"AXChildren\""))
+        XCTAssertTrue(text.contains("bindInput"))
+        let focuser = try String(
+            contentsOf: repoRoot().appendingPathComponent("Sources/SupervimSystem/AXInputFocuser.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(focuser.contains("kAXFocusedAttribute"))
+        XCTAssertTrue(focuser.contains("bindInput"))
+        let vision = try String(
+            contentsOf: repoRoot().appendingPathComponent("Sources/SupervimSystem/VisionHintCapture.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(vision.contains("URLSession"))
+        XCTAssertTrue(vision.contains("SCScreenshotManager"))
+        XCTAssertTrue(vision.contains("CGWindowListCreateImage"))
+        XCTAssertTrue(vision.contains("zh-Hans"))
         for token in [
             "AXIsProcessTrustedWithOptions",
             "kAXTrustedCheckOptionPrompt",

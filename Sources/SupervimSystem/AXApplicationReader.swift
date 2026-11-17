@@ -2,6 +2,7 @@
 import ApplicationServices
 import CoreFoundation
 import Foundation
+import SupervimCore
 
 #if canImport(CoreGraphics)
 import CoreGraphics
@@ -24,9 +25,11 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
     private let identities = FocusIdentityVault()
     private let expansions = AccessibilityExpander()
     private let scrollElements: AXElementStore?
+    private let inputs: AXInputFocuser?
 
-    public init(scrollElements: AXElementStore? = nil) {
+    public init(scrollElements: AXElementStore? = nil, inputs: AXInputFocuser? = nil) {
         self.scrollElements = scrollElements
+        self.inputs = inputs
     }
 
     public func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion {
@@ -120,6 +123,7 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
             return [LiveChoice(source: "focused", found: false, element: nil, live: nil)]
         }
         let limits = TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth)
+        inputs?.resetInputs()
         var choices: [LiveChoice] = []
         var seen: [AXUIElement] = []
         func append(_ element: AXUIElement?, source: String, recordMiss: Bool) {
@@ -223,6 +227,9 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
             scrollElements?.bind(element, identifier: ScrollTargetIdentity.identifier(path: path))
         }
         var node = snapshot(of: element)
+        if InputChoice.isTextInput(role: node.role, subrole: node.subrole) {
+            inputs?.bindInput(element, path: path)
+        }
         let children = copyChildren(element)
         if children.isEmpty {
             return node

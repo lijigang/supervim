@@ -1,5 +1,7 @@
-import AppKit
 import Foundation
+
+#if canImport(AppKit)
+import AppKit
 import SupervimSystem
 
 @main
@@ -22,3 +24,12 @@ enum UISnapshotsMain {
         }
     }
 }
+#else
+@main
+enum UISnapshotsMain {
+    static func main() {
+        FileHandle.standardError.write(Data("UI snapshots require macOS.\n".utf8))
+        exit(1)
+    }
+}
+#endif

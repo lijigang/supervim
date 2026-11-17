@@ -259,6 +259,67 @@ final class HintOverlayTests: XCTestCase {
         XCTAssertEqual(misses.title(fallback: "Normal", now: now.addingTimeInterval(3)), "Normal")
     }
 
+    func testVisionLabelsAppearWhenTheAccessibilityTreeIsEmpty() {
+        let vision = ScriptedVision(result: .targets([
+            HintTarget(frame: HintRect(x: 40, y: 50, width: 120, height: 28), identifier: "vision/0"),
+        ]))
+        let rig = makeRig(elements: [], vision: vision)
+        _ = rig.controller.refreshClickables()
+        let shown = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
+        guard case .showing(let presentation) = shown else {
+            return XCTFail("vision targets should label, got \(shown)")
+        }
+        XCTAssertEqual(presentation.markers.map(\.text), ["F"])
+        XCTAssertEqual(rig.interpreter.mode, .hint(.plain))
+        let typed = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
+        guard case .activated(let activation, _) = typed else {
+            return XCTFail("expected a click, got \(typed)")
+        }
+        XCTAssertEqual(activation.point, HintPoint(x: 100, y: 64))
+    }
+
+    func testVisionAsksForScreenRecordingInsteadOfASilentMiss() {
+        let misses = HintMissBanner(duration: 2)
+        let vision = ScriptedVision(result: .needsScreenRecording)
+        let querier = ScriptedClickables(query: .elements(ClickableSnapshot(elements: [], truncated: false)))
+        let interpreter = EventInterpreter(clock: ManualKeyClock(), cache: safariFocus)
+        let controller = HintController(
+            querier: querier,
+            presenter: CapturedOverlay(),
+            actuator: ActionActuator(poster: ClickPoster()),
+            mode: interpreter,
+            misses: misses,
+            vision: vision
+        )
+        _ = controller.refreshClickables()
+        XCTAssertEqual(
+            controller.consume(interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)),
+            .cancelled(.noTargets)
+        )
+        XCTAssertEqual(misses.title(fallback: "Normal"), HintMissBanner.screenRecordingMessage)
+        XCTAssertEqual(interpreter.mode, .normal)
+    }
+
+    func testVisionLabelsArriveAfterTheKeyAndReplayABufferedLetter() {
+        let vision = ScriptedVision(result: .targets([
+            HintTarget(frame: HintRect(x: 8, y: 8, width: 20, height: 12), identifier: "vision/0"),
+        ]))
+        vision.delay = true
+        let rig = makeRig(elements: [], vision: vision)
+        _ = rig.controller.refreshClickables()
+        let decision = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
+        let waiting = rig.controller.consume(decision)
+        guard case .showing(let empty) = waiting else {
+            return XCTFail("labels wait for vision, got \(waiting)")
+        }
+        XCTAssertTrue(empty.markers.isEmpty)
+        XCTAssertEqual(rig.interpreter.mode, .hint(.plain))
+        _ = rig.controller.receiveHintKey(KeyEvent("f"))
+        vision.finish()
+        XCTAssertEqual(rig.poster.effects.count, 1)
+        XCTAssertEqual(rig.interpreter.mode, .normal)
+    }
+
     func testEmptySnapshotCancelsWithoutAClick() {
         let rig = makeRig(elements: [])
         _ = rig.controller.refreshClickables()
@@ -558,7 +619,7 @@ private struct HintRig {
     var controller: HintController
 }
 
-private func makeRig(elements: [ClickableElement]) -> HintRig {
+private func makeRig(elements: [ClickableElement], vision: (any VisionHintServing)? = nil) -> HintRig {
     let querier = ScriptedClickables(query: .elements(ClickableSnapshot(elements: elements, truncated: false)))
     let presenter = CapturedOverlay()
     let poster = ClickPoster()
@@ -567,7 +628,8 @@ private func makeRig(elements: [ClickableElement]) -> HintRig {
         querier: querier,
         presenter: presenter,
         actuator: ActionActuator(poster: poster),
-        mode: interpreter
+        mode: interpreter,
+        vision: vision
     )
     return HintRig(
         querier: querier,
@@ -597,6 +659,35 @@ private func boxes(_ count: Int) -> [ClickableElement] {
             frame: ElementFrame(x: Double(index) * 30, y: 0, width: 20, height: 10),
             path: [index]
         )
+    }
+}
+
+private final class ScriptedVision: VisionHintServing, @unchecked Sendable {
+    var result: VisionHintResult
+    var delay = false
+    private var completion: (@Sendable (VisionHintResult) -> Void)?
+
+    init(result: VisionHintResult) {
+        self.result = result
+    }
+
+    func prepareHints(
+        bundleIdentifier: String,
+        axHitCount: Int,
+        completion: @escaping @Sendable (VisionHintResult) -> Void
+    ) {
+        _ = bundleIdentifier
+        _ = axHitCount
+        if delay {
+            self.completion = completion
+        } else {
+            completion(result)
+        }
+    }
+
+    func finish() {
+        completion?(result)
+        completion = nil
     }
 }
 

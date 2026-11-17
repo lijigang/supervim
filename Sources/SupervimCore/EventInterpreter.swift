@@ -289,6 +289,17 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
         heldComposer = nil
     }
 
+    /// Insert after `gi`, including when the focus read is not editable yet.
+    /// The cause is manual, so a not-editable notification does not leave Insert.
+    @discardableResult
+    public func enterInsertAfterFocus() -> SupervimMode {
+        let previous = machine.mode
+        heldComposer = nil
+        _ = machine.holdManualInsert()
+        trace("gi", from: previous)
+        return machine.mode
+    }
+
     public func replaceSettings(_ settings: Settings) {
         let timeoutChanged = settings.keySequenceTimeoutMilliseconds != self.settings.keySequenceTimeoutMilliseconds
         self.settings = settings

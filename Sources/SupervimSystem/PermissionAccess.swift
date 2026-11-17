@@ -24,7 +24,8 @@ public final class SystemPermissionStatus: PermissionStatusProviding, @unchecked
         )
         return PermissionStatus(
             accessibilityTrusted: AXIsProcessTrusted(),
-            listenEvent: listenEvent
+            listenEvent: listenEvent,
+            screenRecordingGranted: CGPreflightScreenCaptureAccess()
         )
     }
 }

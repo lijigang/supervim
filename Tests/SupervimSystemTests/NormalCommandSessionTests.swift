@@ -400,22 +400,45 @@ final class NormalCommandSessionTests: XCTestCase {
         _ = fixture.session.handleKeyDown(KeyEvent("g"))
         let performance = fixture.session.handleKeyDown(KeyEvent("i"))
         XCTAssertEqual(fixture.focuser.paths, [[0]])
-        XCTAssertNil(performance.focusedPath)
-        XCTAssertEqual(performance.mode, .normal)
-        XCTAssertEqual(fixture.reader.focusedReads, 0)
+        XCTAssertEqual(performance.focusedPath, [0])
+        XCTAssertEqual(performance.mode, .insert)
+        guard case .mouseClick(let point, _, _) = fixture.poster.effects.first else {
+            return XCTFail("expected a click at the field center, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(point, ActuatorPoint(x: 16, y: 10))
     }
 
-    func testGIStaysInNormalWhenTheFocusedElementIsNotEditable() {
+    /// Accessibility focus is rejected today, and `gi` then does nothing:
+    /// the key is swallowed, Insert is not entered, and the field is not clicked.
+    func testGIClicksTheFieldAndEntersInsertWhenAccessibilityFocusIsRejected() {
+        let fixture = makeSession(bundle: "com.apple.Safari", first: .found(sampleInput(path: [0])))
+        fixture.focuser.accept = false
+        _ = fixture.session.handleKeyDown(KeyEvent("g"))
+        let performance = fixture.session.handleKeyDown(KeyEvent("i"))
+        XCTAssertEqual(fixture.focuser.paths, [[0]])
+        XCTAssertEqual(performance.mode, .insert)
+        XCTAssertEqual(performance.focusedPath, [0])
+        guard case .mouseClick(let point, _, _) = fixture.poster.effects.first else {
+            return XCTFail("expected a click at the field center, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(point, ActuatorPoint(x: 16, y: 10))
+        let typed = fixture.session.handleKeyDown(KeyEvent("a"))
+        XCTAssertEqual(typed.delivery, .passThrough)
+        XCTAssertEqual(typed.mode, .insert)
+    }
+
+    func testGIEntersInsertEvenWhenTheFollowUpReadIsNotEditable() {
         let fixture = makeSession(bundle: "com.apple.Safari", first: .found(sampleInput(path: [1])))
         fixture.reader.editableAfterAccept = false
         _ = fixture.session.handleKeyDown(KeyEvent("g"))
         let performance = fixture.session.handleKeyDown(KeyEvent("i"))
         XCTAssertEqual(performance.focusedPath, [1])
-        XCTAssertEqual(performance.mode, .normal)
+        XCTAssertEqual(performance.mode, .insert)
         XCTAssertEqual(fixture.reader.focusedReads, 1)
-        let scroll = fixture.session.handleKeyDown(KeyEvent("j"))
-        XCTAssertEqual(scroll.delivery, .swallow)
-        XCTAssertFalse(fixture.poster.effects.isEmpty)
+        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        let typed = fixture.session.handleKeyDown(KeyEvent("j"))
+        XCTAssertEqual(typed.delivery, .passThrough)
+        XCTAssertEqual(typed.mode, .insert)
     }
 
     func testControlBracketPassesTheNextKeyWithoutPosting() {
@@ -563,7 +586,8 @@ final class NormalCommandSessionTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(focuser.contains("#if canImport(ApplicationServices)"))
-        XCTAssertTrue(focuser.contains("kAXFocusedUIElementAttribute"))
+        XCTAssertTrue(focuser.contains("kAXFocusedAttribute"))
+        XCTAssertFalse(focuser.contains("kAXFocusedUIElementAttribute"))
         XCTAssertTrue(focuser.contains("AXUIElementSetAttributeValue"))
         XCTAssertTrue(focuser.contains("CFGetTypeID"))
         XCTAssertFalse(focuser.contains("kAXEditableAttribute"))
@@ -572,6 +596,98 @@ final class NormalCommandSessionTests: XCTestCase {
         for token in ["URLSession", "print(", "os_log", "NSLog"] {
             XCTAssertFalse(focuser.contains(token), token)
         }
+    }
+
+    func testEmptyScrollUsesThePointerWhenItIsInsideTheWindow() {
+        let window = ActuatorRect(x: 0, y: 0, width: 800, height: 600)
+        let fixture = makeSession(
+            bundle: "com.tencent.xinWeChat",
+            areas: [],
+            ready: true,
+            pointer: ActuatorPoint(x: 120, y: 80),
+            window: window
+        )
+        let performance = fixture.session.handleKeyDown(KeyEvent("j"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        guard case .pointerScroll(let target, _, _, let location, let horizontal, let vertical) =
+            fixture.poster.effects.first
+        else {
+            return XCTFail("expected a wheel, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(target, "window")
+        XCTAssertEqual(location, ActuatorPoint(x: 120, y: 80))
+        XCTAssertEqual(horizontal, 0)
+        XCTAssertEqual(vertical, -60)
+    }
+
+    func testEmptyScrollUsesTheWindowCenterWhenThePointerIsOutside() {
+        let window = ActuatorRect(x: 10, y: 20, width: 800, height: 600)
+        let fixture = makeSession(
+            bundle: "com.tencent.xinWeChat",
+            areas: [],
+            ready: true,
+            pointer: ActuatorPoint(x: -50, y: -50),
+            window: window
+        )
+        _ = fixture.session.handleKeyDown(KeyEvent("d"))
+        guard case .pointerScroll(_, _, _, let location, _, let vertical) = fixture.poster.effects.first else {
+            return XCTFail("expected a half-page wheel, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(location, ActuatorPoint(x: 410, y: 320))
+        XCTAssertEqual(vertical, -300)
+    }
+
+    func testEmptyGGWheelsTheWindowCenter() {
+        let window = ActuatorRect(x: 0, y: 0, width: 400, height: 300)
+        let fixture = makeSession(
+            bundle: "com.tencent.xinWeChat",
+            areas: [],
+            ready: true,
+            pointer: nil,
+            window: window
+        )
+        let performance = fixture.session.handleKeyDown(KeyEvent("G"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(fixture.poster.effects.count, 8)
+        guard case .pointerScroll(_, let direction, _, let location, _, let vertical) =
+            fixture.poster.effects.first
+        else {
+            return XCTFail("expected edge wheels, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(direction, .down)
+        XCTAssertEqual(location, ActuatorPoint(x: 200, y: 150))
+        XCTAssertLessThan(vertical, 0)
+    }
+
+    func testGIWithoutAnInputShowsABannerAndDoesNotClick() {
+        let banner = HintMissBanner(duration: 2)
+        let fixture = makeSession(bundle: "com.apple.Safari", areas: [], first: .none, banner: banner)
+        _ = fixture.session.handleKeyDown(KeyEvent("g"))
+        let performance = fixture.session.handleKeyDown(KeyEvent("i"))
+        XCTAssertEqual(performance.mode, .normal)
+        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        XCTAssertEqual(banner.title(fallback: "Normal"), HintMissBanner.inputMissingMessage)
+    }
+
+    func testGIInWeChatClicksTheBottomCenterWhenTheTreeHasNoField() {
+        let window = ActuatorRect(x: 0, y: 0, width: 800, height: 600)
+        let fixture = makeSession(
+            bundle: "com.tencent.xinWeChat",
+            areas: [],
+            first: .none,
+            window: window,
+            bundles: { ["com.tencent.xinWeChat"] }
+        )
+        _ = fixture.session.handleKeyDown(KeyEvent("g"))
+        let performance = fixture.session.handleKeyDown(KeyEvent("i"))
+        XCTAssertEqual(performance.mode, .insert)
+        guard case .mouseClick(let point, _, _) = fixture.poster.effects.first else {
+            return XCTFail("expected the composer heuristic, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(point, ActuatorPoint(x: 400, y: 552))
+        let typed = fixture.session.handleKeyDown(KeyEvent("a"))
+        XCTAssertEqual(typed.mode, .insert)
+        XCTAssertEqual(typed.delivery, .passThrough)
     }
 }
 
@@ -969,7 +1085,10 @@ private func makeSession(
     ready: Bool = true,
     first: EditableInputQuery = .none,
     focus: ActuatorPoint? = pagePointer,
-    pointer: ActuatorPoint? = pagePointer
+    pointer: ActuatorPoint? = pagePointer,
+    window: ActuatorRect? = nil,
+    banner: HintMissBanner? = nil,
+    bundles: @escaping @Sendable () -> [String] = { [] }
 ) -> SessionFixture {
     let clock = ManualKeyClock()
     let interpreter = EventInterpreter(
@@ -988,7 +1107,8 @@ private func makeSession(
             scrollAreas: areas ?? [pageArea()],
             scrollCatalogReady: ready,
             firstInput: first,
-            focusPoint: focus
+            focusPoint: focus,
+            windowFrame: window
         )
     )
     let session = NormalCommandSession(
@@ -997,7 +1117,9 @@ private func makeSession(
         actuator: ActionActuator(poster: poster),
         snapshots: snapshots,
         pointer: point,
-        focuser: focuser
+        focuser: focuser,
+        banner: banner,
+        visionBundles: bundles
     )
     return SessionFixture(
         pipeline: pipeline,

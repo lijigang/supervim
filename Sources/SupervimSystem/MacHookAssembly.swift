@@ -14,7 +14,8 @@ public enum MenuHookAssembly {
         misses: HintMissBanner = HintMissBanner()
     ) -> SupervimRuntime {
         let scrollElements = AXElementStore()
-        let reader = AXSystemReader(scrollElements: scrollElements)
+        let focuser = AXInputFocuser()
+        let reader = AXSystemReader(scrollElements: scrollElements, inputs: focuser)
         let signals = AXFocusSignal()
         let fanout = FanoutSignals(inner: signals)
         let pipeline = FocusPipeline(
@@ -25,14 +26,18 @@ public enum MenuHookAssembly {
         )
         let poster = CGEventActuatorPoster(accessibility: scrollElements)
         let actuator = ActionActuator(poster: poster, edgeBars: scrollElements)
-        let focuser = AXInputFocuser()
         let panel = NonActivatingHintPanel()
+        let vision = SystemVisionHints {
+            decider.settingsSnapshot().visionBundleIdentifiers
+        }
         let hints = HintController(
             querier: pipeline.scanner,
             presenter: panel,
             actuator: actuator,
             mode: decider,
-            misses: misses
+            misses: misses,
+            vision: vision,
+            frontBundle: { pipeline.cache.currentFocus().bundleIdentifier }
         )
         let help = HelpController(presenter: panel)
         let snapshots = LockedCommandSnapshot(snapshot: .unavailable)
@@ -44,7 +49,10 @@ public enum MenuHookAssembly {
             pointer: QuartzPointer(),
             focuser: focuser,
             hints: hints,
-            help: help
+            help: help,
+            banner: misses,
+            windows: CGFrontWindow(),
+            visionBundles: { decider.settingsSnapshot().visionBundleIdentifiers }
         )
         let refresh = SnapshotRefresh(
             reader: reader,
@@ -61,7 +69,7 @@ public enum MenuHookAssembly {
             permissions: SystemHookPermission(),
             focus: starter,
             hook: tap,
-            owners: [pipeline, session, adapter, tap, poster, focuser, hints, help, panel, refresh, starter, fanout]
+            owners: [pipeline, session, adapter, tap, poster, focuser, hints, help, panel, refresh, starter, fanout, vision]
         )
     }
 }

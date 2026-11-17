@@ -137,6 +137,10 @@ public enum ModeTrace {
         "hint-click index=\(index) method=\(method) ax=\(x),\(y)"
     }
 
+    public static func formatHintPanel(screen: Int, scale: Double, frame: HintRect) -> String {
+        "hint-panel screen=\(screen) scale=\(scale) x=\(frame.x) y=\(frame.y) w=\(frame.width) h=\(frame.height)"
+    }
+
     public static func noteLine(_ line: String) {
         guard enabled() else {
             return

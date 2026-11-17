@@ -267,6 +267,23 @@ public struct ModeMachine: Sendable {
         return leaveHint()
     }
 
+    /// Enters Insert even when focus is still unknown or not editable.
+    /// `gi` uses this after it moves focus, so a follow-up read that is not
+    /// editable yet does not bounce back to Normal. A later not-editable read
+    /// keeps Insert because the cause is manual.
+    public mutating func holdManualInsert() -> ModeStep {
+        if mode == .paused || foreground == .excluded {
+            return stay()
+        }
+        var effects: [ModeEffect] = [.swallowKey]
+        if case .hint = mode {
+            effects.append(.endHint)
+        }
+        mode = .insert
+        insertCause = .manual
+        return ModeStep(mode: .insert, effects: effects)
+    }
+
     private mutating func enterAutomaticInsert() -> ModeStep {
         var effects: [ModeEffect] = []
         if case .hint = mode {

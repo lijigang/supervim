@@ -3,6 +3,7 @@ import Foundation
 public enum PermissionKind: Equatable, Sendable {
     case accessibility
     case inputMonitoring
+    case screenRecording
 }
 
 public enum PermissionGrant: Equatable, Sendable {
@@ -37,16 +38,29 @@ public enum ListenEventAccess: Equatable, Sendable {
 public struct PermissionStatus: Equatable, Sendable {
     public var accessibility: PermissionGrant
     public var inputMonitoring: PermissionGrant
+    /// Optional. A missing grant does not block the guide or the event hook.
+    /// Vision asks for it the first time a capture is needed.
+    public var screenRecording: PermissionGrant
 
-    public init(accessibility: PermissionGrant, inputMonitoring: PermissionGrant) {
+    public init(
+        accessibility: PermissionGrant,
+        inputMonitoring: PermissionGrant,
+        screenRecording: PermissionGrant = .granted
+    ) {
         self.accessibility = accessibility
         self.inputMonitoring = inputMonitoring
+        self.screenRecording = screenRecording
     }
 
     /// Only an explicit grant counts. Unknown and denied Input Monitoring are missing.
-    public init(accessibilityTrusted: Bool, listenEvent: ListenEventAccess) {
+    public init(
+        accessibilityTrusted: Bool,
+        listenEvent: ListenEventAccess,
+        screenRecordingGranted: Bool = true
+    ) {
         self.accessibility = accessibilityTrusted ? .granted : .missing
         self.inputMonitoring = listenEvent == .granted ? .granted : .missing
+        self.screenRecording = screenRecordingGranted ? .granted : .missing
     }
 }
 
@@ -138,7 +152,11 @@ public final class PermissionGuide: @unchecked Sendable {
         if status.inputMonitoring == .missing {
             links.append(Self.inputMonitoringLink)
         }
-        guard !links.isEmpty else {
+        if status.screenRecording == .missing {
+            links.append(Self.screenRecordingLink)
+        }
+        let required = links.filter { $0.kind != .screenRecording }
+        guard !required.isEmpty else {
             return PermissionGuidance(
                 isVisible: false,
                 title: "",
@@ -152,7 +170,7 @@ public final class PermissionGuide: @unchecked Sendable {
         return PermissionGuidance(
             isVisible: true,
             title: Self.windowTitle,
-            body: Self.body(lead: Self.lead(for: status)),
+            body: Self.body(lead: Self.lead(for: status), screenRecording: status.screenRecording),
             links: links,
             checkAgainTitle: Self.checkAgainTitle,
             menuTitle: Self.menuTitle,
@@ -170,13 +188,18 @@ public final class PermissionGuide: @unchecked Sendable {
         return "Supervim needs Input Monitoring. Open the System Settings pane and turn Supervim on."
     }
 
-    private static func body(lead: String) -> String {
-        """
+    private static func body(lead: String, screenRecording: PermissionGrant) -> String {
+        let screen = screenRecording == .missing
+            ? "\(Self.screenRecordingSentence) Turn on Screen Recording in System Settings if labels are missing in that app."
+            : Self.screenRecordingSentence
+        return """
         \(lead)
 
         If Supervim is already in that list but this copy still has no permission, the old row belongs to a previous build. Select it, click the minus button to remove it, then add this Supervim and turn it on. That is required once when moving from an ad-hoc build to a build signed with the stable identity. Later upgrades keep the same signing certificate, so the grant stays.
 
         Granting a permission does not guarantee that this process receives it without quitting and reopening Supervim. Whether that happens depends on the system version and whether the permission database refreshes. It is not verified.
+
+        \(screen)
         """
     }
 
@@ -195,6 +218,14 @@ public final class PermissionGuide: @unchecked Sendable {
         kind: .inputMonitoring,
         title: "Open Input Monitoring Settings",
         destination: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent"
+    )
+
+    private static let screenRecordingSentence = "Screen Recording is optional. Supervim asks for it the first time an app has no accessibility elements to label. The capture stays on this Mac and is not uploaded."
+
+    private static let screenRecordingLink = PrivacyPaneLink(
+        kind: .screenRecording,
+        title: "Open Screen Recording Settings",
+        destination: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
     )
 }
 

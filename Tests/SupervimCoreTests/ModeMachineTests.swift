@@ -505,6 +505,31 @@ final class ModeMachineTests: XCTestCase {
         assertStep(&machine, .resume, mode: .normal, effects: [])
     }
 
+    func testHoldManualInsertEntersInsertEvenWhenFocusIsUnknown() {
+        var machine = armedNormal()
+        let step = machine.holdManualInsert()
+        XCTAssertEqual(machine.mode, .insert)
+        XCTAssertEqual(step.effects, [.swallowKey])
+        assertStep(&machine, .focus(.notEditable), mode: .insert, effects: [])
+
+        var unknown = ModeMachine()
+        XCTAssertEqual(unknown.holdManualInsert().mode, .insert)
+
+        var paused = armedNormal()
+        _ = paused.handle(.pause)
+        XCTAssertEqual(paused.holdManualInsert().mode, .paused)
+
+        var hint = armedNormal()
+        _ = hint.handle(.key(.hint(.plain)))
+        let left = hint.holdManualInsert()
+        XCTAssertEqual(hint.mode, .insert)
+        XCTAssertTrue(left.effects.contains(.endHint))
+
+        var excluded = armedNormal()
+        _ = excluded.handle(.foreground(.excluded))
+        XCTAssertEqual(excluded.holdManualInsert().mode, .normal)
+    }
+
     func testValueCopiesDoNotShareLaterTransitions() {
         let original = armedNormal()
         var copy = original
