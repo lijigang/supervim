@@ -5,6 +5,15 @@ public enum KeyDelivery: Equatable, Sendable {
     case swallow
 }
 
+public enum HintEnd: Equatable, Sendable {
+    case completed
+    case cancelled
+}
+
+public protocol HintModeEnding: AnyObject, Sendable {
+    func endHint(_ reason: HintEnd) -> EventDecision
+}
+
 /// An overlay change for a later drawing task.
 /// Nothing in this module creates a window.
 public enum OverlayUpdate: Equatable, Sendable {
@@ -148,6 +157,28 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
             actions: [],
             overlay: transition.overlay,
             effects: transition.effects
+        )
+    }
+
+    /// Leaves Hint after a label was clicked or the overlay gave up.
+    /// Does nothing to a prefix or to another mode. The key hook does not call this.
+    public func endHint(_ reason: HintEnd) -> EventDecision {
+        let input: ModeInput
+        switch reason {
+        case .completed:
+            input = .hintCompleted
+        case .cancelled:
+            input = .hintCancelled
+        }
+        let step = machine.handle(input)
+        if step.effects.contains(.endHint) {
+            _ = parser.suspendParsing()
+        }
+        return decided(
+            delivery: .passThrough,
+            actions: [],
+            overlay: overlay(from: step.effects),
+            effects: step.effects
         )
     }
 
@@ -312,6 +343,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
         effects.contains(.endHint) ? .endHint : nil
     }
 }
+
+extension EventInterpreter: HintModeEnding {}
 
 extension EventInterpreter {
     private struct Transition {

@@ -84,6 +84,7 @@ private let approvedStatus: [Int: String] = {
     status[7] = "done"
     status[8] = "done"
     status[9] = "done"
+    status[10] = "done"
     status[13] = "done"
     return status
 }()

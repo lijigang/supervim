@@ -62,6 +62,9 @@ jobs:
       - name: Measure menu bar coverage
         run: scripts/menu-bar-coverage.sh
 
+      - name: Measure hint overlay coverage
+        run: scripts/hint-overlay-coverage.sh
+
       - name: Assemble unsigned menu-bar app
         run: scripts/assemble-app.sh
 

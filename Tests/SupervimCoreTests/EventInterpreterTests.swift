@@ -572,6 +572,44 @@ final class EventInterpreterTests: XCTestCase {
         XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("f"), cache: safari), plainHint())
     }
 
+    func testCompletedHintReturnsToNormalAndTheNextKeyScrolls() {
+        let interpreter = makeInterpreter().interpreter
+        _ = interpreter.handleKeyDown(KeyEvent("f"), cache: safari)
+        XCTAssertEqual(interpreter.endHint(.completed), endedHint())
+        XCTAssertEqual(interpreter.mode, .normal)
+        XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("j"), cache: safari), scrollDown())
+    }
+
+    func testCancelledHintReturnsToNormalWithoutAnAction() {
+        let interpreter = makeInterpreter().interpreter
+        _ = interpreter.handleKeyDown(KeyEvent("F"), cache: safari)
+        XCTAssertEqual(interpreter.mode, .hint(.command))
+        let decision = interpreter.endHint(.cancelled)
+        XCTAssertEqual(decision, endedHint())
+        XCTAssertTrue(decision.actions.isEmpty)
+        XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("j"), cache: safari), scrollDown())
+    }
+
+    func testEndingHintOutsideHintDoesNotDropAPrefix() {
+        let interpreter = makeInterpreter().interpreter
+        XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("g"), cache: safari).delivery, .swallow)
+        XCTAssertEqual(
+            interpreter.endHint(.cancelled),
+            EventDecision(delivery: .passThrough, mode: .normal)
+        )
+        XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("g"), cache: safari), scrollToTop())
+    }
+
+    func testEndingHintWhileInsertStaysInInsert() {
+        let interpreter = makeInterpreter().interpreter
+        _ = interpreter.handleKeyDown(KeyEvent("i"), cache: safari)
+        let decision = interpreter.endHint(.completed)
+        XCTAssertEqual(decision.mode, .insert)
+        XCTAssertNil(decision.overlay)
+        XCTAssertEqual(decision.delivery, .passThrough)
+        XCTAssertTrue(decision.actions.isEmpty)
+    }
+
     func testInterpreterSourceDoesNotTouchTheSystemOrRecordKeys() throws {
         let url = repoRoot().appendingPathComponent("Sources/SupervimCore/EventInterpreter.swift")
         let text = try String(contentsOf: url, encoding: .utf8)
@@ -650,6 +688,15 @@ private func passNext() -> EventDecision {
         delivery: .swallow,
         mode: .normal,
         actions: [.passNextKey]
+    )
+}
+
+private func endedHint() -> EventDecision {
+    EventDecision(
+        delivery: .passThrough,
+        mode: .normal,
+        overlay: .endHint,
+        modeEffects: [.endHint]
     )
 }
 

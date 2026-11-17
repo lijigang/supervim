@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T07:14:30.000Z",
-      "description": "Supervim 已批准任务。任务 1 到任务 7 已合并，状态为 done。任务 8、任务 9 和任务 13 为 done。任务 10 到 12、14 和 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T07:27:20.000Z",
+      "description": "Supervim 已批准任务。任务 1 到任务 9 已合并，状态为 done。任务 10 和任务 13 为 done。任务 11、12、14 和 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -109,7 +109,7 @@
         "id": 10,
         "title": "Overlay 与 f/F 提示",
         "description": "在当前窗口上显示不激活的透明标签，输入标签后点击或取消。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [4, 7, 8, 9],
         "priority": "medium",
         "details": "f 为当前窗口可点击元素标上最短主键行标签，键入标签后点击并关闭；F 同样流程但执行 Command 点击。Esc 或无效输入取消。浮层透明且不激活，避免抢走焦点。规格里的 Safari、Finder、系统设置 200ms 内出现、可访问按钮和链接覆盖超过 90% 是验收目标，不是本任务可以靠单元测试断言的结果。实现时测量并记录，测不到就明确写未测。",
