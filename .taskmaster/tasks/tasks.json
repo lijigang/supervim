@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T05:39:00.000Z",
-      "description": "Supervim 已批准任务。任务 1 和任务 2 已合并，状态为 done。任务 3 在评审前保持 in-progress。任务 4 和任务 5 为 done。任务 6 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T05:57:20.000Z",
+      "description": "Supervim 已批准任务。任务 1 和任务 2 已合并，状态为 done。任务 3 在评审前保持 in-progress。任务 4、任务 5 和任务 6 为 done。任务 7 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -65,7 +65,7 @@
         "id": 6,
         "title": "Settings 本地设置",
         "description": "用 UserDefaults 保存排除列表、暂停快捷键和登录启动偏好。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [1],
         "priority": "medium",
         "details": "默认排除 Terminal、iTerm、Emacs。批准文档给了应用名，没有给 bundle identifier；实现时列出所采用的标识，并标明哪些是未批准的选择。暂停快捷键默认是 Ctrl+Option+V。登录启动只保存偏好，真正的登录项注册留到菜单栏与发布相关任务。设置不联网。测试使用替身或临时 UserDefaults，不写用户真实偏好域。",
