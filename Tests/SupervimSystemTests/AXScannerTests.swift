@@ -92,6 +92,78 @@ final class AXScannerTests: XCTestCase {
         XCTAssertEqual(inside.mode, .insert)
     }
 
+    /// WeChat's focused element is a new AX object on every read. `CFEqual` then
+    /// misses, the token changes, and the Esc hold must still keep Normal so `f`
+    /// can label. A field with a different role or a frame that does not overlap
+    /// the composer is a real move back into Insert.
+    func testEscapedComposerStaysNormalWhenWeChatReissuesTheElement() {
+        let composer = AccessibilityElement(
+            role: "AXTextArea",
+            editableAttribute: true,
+            identity: "ax-1",
+            frame: ElementFrame(x: 0, y: 520, width: 800, height: 80)
+        )
+        let held = makeFocusFixture()
+        held.reader.focused = .value(composer)
+        held.reader.bundle = .value("com.tencent.xinWeChat")
+        XCTAssertEqual(held.pipeline.scanner.noteFocusChanged().mode, .insert)
+        XCTAssertEqual(held.pipeline.wiring.handleKeyDown(KeyEvent(identity: .escape)).mode, .normal)
+
+        held.reader.focused = .value(AccessibilityElement(
+            role: "AXTextArea",
+            editableAttribute: true,
+            identity: "ax-2",
+            frame: ElementFrame(x: 4, y: 524, width: 790, height: 76)
+        ))
+        XCTAssertEqual(held.pipeline.scanner.noteFocusChanged().mode, .normal)
+        let hint = held.pipeline.wiring.handleKeyDown(KeyEvent("f"))
+        XCTAssertEqual(hint.mode, .hint(.plain))
+        XCTAssertEqual(hint.delivery, .swallow)
+        XCTAssertEqual(hint.overlay, .beginHint(.plain))
+
+        let clicked = makeFocusFixture()
+        clicked.reader.focused = .value(composer)
+        clicked.reader.bundle = .value("com.tencent.xinWeChat")
+        _ = clicked.pipeline.scanner.noteFocusChanged()
+        _ = clicked.pipeline.wiring.handleKeyDown(KeyEvent(identity: .escape))
+        clicked.reader.focused = .value(AccessibilityElement(
+            role: "AXTextArea",
+            editableAttribute: true,
+            identity: "ax-3",
+            frame: ElementFrame(x: 0, y: 520, width: 800, height: 80)
+        ))
+        XCTAssertEqual(clicked.pipeline.scanner.noteFocusChanged().mode, .normal)
+        XCTAssertEqual(clicked.interpreter.acceptPointerClick(x: 10, y: 10).mode, .normal)
+        XCTAssertEqual(clicked.interpreter.acceptPointerClick(x: 40, y: 540).mode, .insert)
+
+        let unnamed = makeFocusFixture()
+        unnamed.reader.focused = .value(composer)
+        unnamed.reader.bundle = .value("com.tencent.xinWeChat")
+        _ = unnamed.pipeline.scanner.noteFocusChanged()
+        _ = unnamed.pipeline.wiring.handleKeyDown(KeyEvent(identity: .escape))
+        unnamed.reader.focused = .value(AccessibilityElement(
+            role: "AXTextArea",
+            editableAttribute: true,
+            identity: "ax-4"
+        ))
+        XCTAssertEqual(unnamed.pipeline.scanner.noteFocusChanged().mode, .normal)
+        XCTAssertEqual(unnamed.pipeline.wiring.handleKeyDown(KeyEvent("f")).overlay, .beginHint(.plain))
+
+        let moved = makeFocusFixture()
+        moved.reader.focused = .value(composer)
+        moved.reader.bundle = .value("com.tencent.xinWeChat")
+        _ = moved.pipeline.scanner.noteFocusChanged()
+        _ = moved.pipeline.wiring.handleKeyDown(KeyEvent(identity: .escape))
+        moved.reader.focused = .value(AccessibilityElement(
+            role: "AXTextField",
+            subrole: "AXSearchField",
+            editableAttribute: true,
+            identity: "ax-9",
+            frame: ElementFrame(x: 200, y: 8, width: 240, height: 28)
+        ))
+        XCTAssertEqual(moved.pipeline.scanner.noteFocusChanged().mode, .insert)
+    }
+
     func testEditableFocusEntersInsertAndPassesTheKeyWithoutWalkingTheWindow() {
         let fixture = makeFocusFixture()
         fixture.reader.focused = .value(inputElement())
@@ -595,6 +667,83 @@ final class AXScannerTests: XCTestCase {
         XCTAssertEqual(reader.expansions, [.manual])
         XCTAssertEqual(snapshot.elements.map(\.role), ["AXButton"])
         XCTAssertEqual(reader.windowReads, 2)
+    }
+
+    func testEmptyFocusedWindowUsesAnotherWindowWithoutWaiting() {
+        let reader = ChoiceReader()
+        reader.phase = .windowsReady
+        let pipeline = FocusPipeline(
+            decider: EventInterpreter(clock: ManualKeyClock()),
+            reader: reader,
+            signals: ScriptedFocusSignals()
+        )
+        guard case .elements(let snapshot) = pipeline.scanner.clickableElements() else {
+            return XCTFail("expected the window list")
+        }
+        XCTAssertEqual(snapshot.elements.map(\.role), ["AXButton"])
+        XCTAssertEqual(reader.expansionAllows, [])
+    }
+
+    func testPopulationDelayRereadsAfterManualAccessibility() {
+        let reader = ChoiceReader()
+        let waiter = RecordingTreeWaiter()
+        waiter.onWait = { reader.phase = .windowsReady }
+        let pipeline = FocusPipeline(
+            decider: EventInterpreter(clock: ManualKeyClock()),
+            reader: reader,
+            signals: ScriptedFocusSignals(),
+            waiter: waiter,
+            populationDelayMilliseconds: 120
+        )
+        guard case .elements(let snapshot) = pipeline.scanner.clickableElements() else {
+            return XCTFail("expected the tree after the delay")
+        }
+        XCTAssertEqual(snapshot.elements.map(\.role), ["AXButton"])
+        XCTAssertEqual(waiter.delays, [120])
+        XCTAssertEqual(reader.expansionAllows, [false])
+    }
+
+    func testEnhancedIsTriedWhenTheTreeIsStillEmptyAfterManual() {
+        let reader = ChoiceReader()
+        reader.populateOnEnhanced = true
+        let waiter = RecordingTreeWaiter()
+        let pipeline = FocusPipeline(
+            decider: EventInterpreter(clock: ManualKeyClock()),
+            reader: reader,
+            signals: ScriptedFocusSignals(),
+            waiter: waiter,
+            populationDelayMilliseconds: 120
+        )
+        guard case .elements(let snapshot) = pipeline.scanner.clickableElements() else {
+            return XCTFail("expected the tree after enhanced mode")
+        }
+        XCTAssertEqual(snapshot.elements.map(\.role), ["AXButton"])
+        XCTAssertEqual(waiter.delays, [120, 120])
+        XCTAssertEqual(reader.expansionAllows, [false, true])
+    }
+
+    func testApplicationTreeIsUsedWhenEveryWindowAttributeIsMissing() {
+        let reader = ChoiceReader()
+        reader.phase = .applicationOnly
+        let pipeline = FocusPipeline(
+            decider: EventInterpreter(clock: ManualKeyClock()),
+            reader: reader,
+            signals: ScriptedFocusSignals()
+        )
+        guard case .elements(let snapshot) = pipeline.scanner.clickableElements() else {
+            return XCTFail("expected the application tree")
+        }
+        XCTAssertEqual(snapshot.elements.map(\.role), ["AXButton"])
+        XCTAssertEqual(reader.expansionAllows, [])
+    }
+
+    func testMacReaderNamesEveryWindowFallbackAndStillSetsEnhanced() throws {
+        let url = repoRoot().appendingPathComponent("Sources/SupervimSystem/AXApplicationReader.swift")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        for token in ["kAXFocusedWindowAttribute", "kAXMainWindowAttribute", "kAXWindowsAttribute", "AXEnhancedUserInterface", "readApplicationElement"] {
+            XCTAssertTrue(text.contains(token), token)
+        }
+        XCTAssertFalse(text.contains("manualAlreadyWorked"))
     }
 
     func testPressActionMakesContainerRolesClickable() {
@@ -1136,6 +1285,102 @@ private func windowElement(
     )
 }
 
+private final class RecordingTreeWaiter: AccessibilityTreeWaiting, @unchecked Sendable {
+    var delays: [Int] = []
+    var onWait: (() -> Void)?
+
+    func waitForAccessibilityTree(milliseconds: Int) {
+        delays.append(milliseconds)
+        onWait?()
+    }
+}
+
+private final class ChoiceReader: AccessibilityReading, @unchecked Sendable {
+    enum Phase {
+        case empty
+        case windowsReady
+        case applicationOnly
+    }
+
+    var phase: Phase = .empty
+    var populateOnEnhanced = false
+    private(set) var expansionAllows: [Bool] = []
+
+    func readFocusedElement() -> AccessibilityRead<AccessibilityElement> {
+        .unavailable
+    }
+
+    func readFrontmostBundleIdentifier() -> AccessibilityRead<String> {
+        .value("com.tencent.xinWeChat")
+    }
+
+    func readFrontmostWindow(maxNodes: Int, maxDepth: Int) -> AccessibilityRead<AccessibilityElement> {
+        _ = maxNodes
+        _ = maxDepth
+        return .unavailable
+    }
+
+    func readWindowChoices(maxNodes: Int, maxDepth: Int) -> [AccessibilityWindowChoice] {
+        _ = maxNodes
+        _ = maxDepth
+        if phase == .applicationOnly {
+            return [
+                AccessibilityWindowChoice(source: "focused", found: false, element: nil),
+                AccessibilityWindowChoice(source: "main", found: false, element: nil),
+                AccessibilityWindowChoice(source: "windows", found: false, element: nil),
+            ]
+        }
+        let empty = AccessibilityElement(
+            role: "AXWindow",
+            frame: ElementFrame(x: 0, y: 0, width: 800, height: 600)
+        )
+        var choices = [
+            AccessibilityWindowChoice(source: "focused", found: true, element: empty),
+            AccessibilityWindowChoice(source: "main", found: false, element: nil),
+        ]
+        if phase == .windowsReady {
+            choices.append(AccessibilityWindowChoice(source: "windows", found: true, element: buttonWindow()))
+        } else {
+            choices.append(AccessibilityWindowChoice(source: "windows", found: false, element: nil))
+        }
+        return choices
+    }
+
+    func readApplicationElement(maxNodes: Int, maxDepth: Int) -> AccessibilityElement? {
+        _ = maxNodes
+        _ = maxDepth
+        guard phase == .applicationOnly else {
+            return nil
+        }
+        return buttonWindow()
+    }
+
+    func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion {
+        expansionAllows.append(allowEnhanced)
+        if allowEnhanced && populateOnEnhanced {
+            phase = .windowsReady
+            return .enhanced
+        }
+        if !allowEnhanced {
+            return .manual
+        }
+        return .unchanged
+    }
+
+    private func buttonWindow() -> AccessibilityElement {
+        AccessibilityElement(
+            role: "AXWindow",
+            frame: ElementFrame(x: 0, y: 0, width: 800, height: 600),
+            children: [
+                AccessibilityElement(
+                    role: "AXButton",
+                    frame: ElementFrame(x: 20, y: 40, width: 120, height: 28)
+                ),
+            ]
+        )
+    }
+}
+
 private final class ExpandingAccessibilityReader: AccessibilityReading, @unchecked Sendable {
     var bundle = ""
     private(set) var expansions: [AccessibilityTreeExpansion] = []
@@ -1172,8 +1417,11 @@ private final class ExpandingAccessibilityReader: AccessibilityReading, @uncheck
     }
 
     func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion {
-        XCTAssertTrue(allowEnhanced)
         opened = true
+        if allowEnhanced {
+            expansions.append(.enhanced)
+            return .enhanced
+        }
         expansions.append(.manual)
         return .manual
     }

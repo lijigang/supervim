@@ -21,7 +21,7 @@ final class HintOverlayTests: XCTestCase {
         guard case .showing(let presentation) = shown else {
             return XCTFail("begin should use the cached snapshot, got \(shown)")
         }
-        XCTAssertEqual(presentation.markers.map(\.text), ["A"])
+        XCTAssertEqual(presentation.markers.map(\.text), ["F"])
         XCTAssertEqual(presentation.policy, .hintLabels)
     }
 
@@ -30,7 +30,7 @@ final class HintOverlayTests: XCTestCase {
         _ = rig.controller.refreshClickables()
         let shown = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
         let presentation = OverlayPresentation(
-            markers: [HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6)],
+            markers: [HintMarker(index: 0, text: "F", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6)],
             policy: OverlayWindowPolicy.hintLabels
         )
         XCTAssertEqual(shown, .showing(presentation))
@@ -47,9 +47,9 @@ final class HintOverlayTests: XCTestCase {
         let rig = makeRig(elements: [oneBox()])
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
-        let typed = rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus)
+        let typed = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
         XCTAssertEqual(typed.mode, .hint(.plain))
-        XCTAssertEqual(typed.overlay, .hintKey(KeyEvent("a")))
+        XCTAssertEqual(typed.overlay, .hintKey(KeyEvent("f")))
         XCTAssertEqual(
             rig.controller.consume(typed),
             .activated(
@@ -71,7 +71,7 @@ final class HintOverlayTests: XCTestCase {
         let rig = makeRig(elements: [oneBox()])
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("F"), cache: safariFocus))
-        let typed = rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus)
+        let typed = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
         let effect = ActuatorEffect.mouseClick(
             point: ActuatorPoint(x: 14, y: 23),
             button: .left,
@@ -90,17 +90,15 @@ final class HintOverlayTests: XCTestCase {
     }
 
     func testPartialInputUpdatesMarkersWithoutClicking() {
-        let rig = makeRig(elements: tenBoxes())
+        let rig = makeRig(elements: boxes(27))
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
-        let partial = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus))
-        XCTAssertEqual(partial, .showing(OverlayPresentation(
-            markers: [
-                HintMarker(index: 0, text: "AA", anchor: HintPoint(x: 0, y: 0), elementWidth: 20, elementHeight: 10),
-                HintMarker(index: 9, text: "AS", anchor: HintPoint(x: 270, y: 0), elementWidth: 20, elementHeight: 10),
-            ],
-            policy: .hintLabels
-        )))
+        let partial = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("z"), cache: safariFocus))
+        guard case .showing(let presentation) = partial else {
+            return XCTFail("the shared prefix should keep both two-letter labels, got \(partial)")
+        }
+        XCTAssertEqual(presentation.markers.count, 2)
+        XCTAssertTrue(presentation.markers.allSatisfy { $0.text.hasPrefix("Z") })
         XCTAssertEqual(rig.poster.effects, [])
         XCTAssertEqual(rig.presenter.hides, 0)
         XCTAssertEqual(rig.interpreter.mode, .hint(.plain))
@@ -111,7 +109,6 @@ final class HintOverlayTests: XCTestCase {
         let rig = makeRig(elements: tenBoxes())
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
-        _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus))
         let bad = rig.interpreter.handleKeyDown(KeyEvent("q"), cache: safariFocus)
         XCTAssertEqual(bad.mode, .hint(.plain))
         XCTAssertEqual(rig.controller.consume(bad), .cancelled(.invalidInput))
@@ -141,17 +138,17 @@ final class HintOverlayTests: XCTestCase {
     }
 
     func testUnnamedKeyCancelsAndBackspaceFilters() {
-        let rig = makeRig(elements: tenBoxes())
+        let rig = makeRig(elements: boxes(27))
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
-        _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus))
+        _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("z"), cache: safariFocus))
         XCTAssertEqual(rig.presenter.presentations.last?.markers.count, 2)
         let delete = rig.interpreter.handleKeyDown(KeyEvent(identity: .unnamed), cache: safariFocus)
         let filtered = rig.controller.consume(delete, hintKeyCode: HintTyping.backspaceKeyCode)
         guard case .showing(let presentation) = filtered else {
             return XCTFail("delete should remove the typed character, got \(filtered)")
         }
-        XCTAssertEqual(presentation.markers.count, 10)
+        XCTAssertEqual(presentation.markers.count, 27)
         XCTAssertEqual(rig.poster.effects, [])
 
         let arrow = rig.interpreter.handleKeyDown(KeyEvent(identity: .unnamed), cache: safariFocus)
@@ -169,11 +166,37 @@ final class HintOverlayTests: XCTestCase {
         XCTAssertEqual(rig.poster.effects, [])
     }
 
-    func testBeginWithoutRefreshCancelsAsUnavailable() {
+    func testHintEntryRescansWhenTheCachedSnapshotIsEmpty() {
+        let rig = makeRig(elements: [])
+        _ = rig.controller.refreshClickables()
+        XCTAssertEqual(rig.querier.reads, 1)
+        rig.querier.query = .elements(ClickableSnapshot(elements: [oneBox()], truncated: false))
+        let begin = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
+        let shown = rig.controller.consume(begin)
+        XCTAssertEqual(rig.querier.reads, 2, "f must scan again when the cached snapshot has no targets")
+        guard case .showing(let presentation) = shown else {
+            return XCTFail("an empty cache should be scanned again, got \(shown)")
+        }
+        XCTAssertEqual(presentation.markers.count, 1)
+    }
+
+    func testBeginWithoutRefreshScansAndShowsWhatItFinds() {
         let rig = makeRig(elements: [oneBox()])
         let begin = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
+        guard case .showing = rig.controller.consume(begin) else {
+            return XCTFail("f with an empty cache should scan before giving up")
+        }
+        XCTAssertEqual(rig.querier.reads, 1)
+        XCTAssertEqual(rig.poster.effects, [])
+        XCTAssertEqual(rig.interpreter.mode, .hint(.plain))
+    }
+
+    func testBeginWithoutRefreshCancelsWhenTheScanIsUnavailable() {
+        let rig = makeRig(elements: [oneBox()])
+        rig.querier.query = .unavailable
+        let begin = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
         XCTAssertEqual(rig.controller.consume(begin), .cancelled(.unavailable))
-        XCTAssertEqual(rig.querier.reads, 0)
+        XCTAssertEqual(rig.querier.reads, 1)
         XCTAssertEqual(rig.presenter.presentations, [])
         XCTAssertEqual(rig.presenter.hides, 1)
         XCTAssertEqual(rig.poster.effects, [])
@@ -190,7 +213,7 @@ final class HintOverlayTests: XCTestCase {
         let rig = makeRig(elements: [box])
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
-        let typed = rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus)
+        let typed = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
         let point = ActuatorPoint(x: -300, y: 120)
         let effect = ActuatorEffect.accessibilityPress(elementID: "1/2", fallback: point)
         XCTAssertEqual(
@@ -315,7 +338,7 @@ final class HintOverlayTests: XCTestCase {
         let rig = makeRig(elements: [box])
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
-        _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("a"), cache: safariFocus))
+        _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
         XCTAssertEqual(
             rig.poster.effects,
             [.accessibilityPress(elementID: "2/0", fallback: ActuatorPoint(x: 14, y: 23))]
@@ -326,7 +349,7 @@ final class HintOverlayTests: XCTestCase {
         let rig = makeRig(elements: [oneBox()])
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
-        let chord = KeyEvent("a", modifiers: .command)
+        let chord = KeyEvent("f", modifiers: .command)
         let typed = rig.interpreter.handleKeyDown(chord, cache: safariFocus)
         XCTAssertEqual(typed.overlay, .hintKey(chord))
         _ = rig.controller.consume(typed)
@@ -338,7 +361,7 @@ final class HintOverlayTests: XCTestCase {
         let rig = makeRig(elements: [oneBox()])
         _ = rig.controller.refreshClickables()
         _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus))
-        _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("A"), cache: safariFocus))
+        _ = rig.controller.consume(rig.interpreter.handleKeyDown(KeyEvent("F"), cache: safariFocus))
         XCTAssertEqual(rig.poster.effects, [plainClick(x: 14, y: 23)])
     }
 
@@ -357,7 +380,7 @@ final class HintOverlayTests: XCTestCase {
             return XCTFail("a new hint should replace the old labels, got \(again)")
         }
         XCTAssertEqual(presentation.markers.count, 10)
-        XCTAssertEqual(presentation.markers.first?.text, "AA")
+        XCTAssertEqual(presentation.markers.first?.text, "F")
         XCTAssertEqual(rig.poster.effects, [])
         XCTAssertEqual(rig.querier.reads, 2)
     }
@@ -376,7 +399,7 @@ final class HintOverlayTests: XCTestCase {
             return XCTFail("only the usable element should be labeled, got \(shown)")
         }
         XCTAssertEqual(presentation.markers, [
-            HintMarker(index: 0, text: "A", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6),
+            HintMarker(index: 0, text: "F", anchor: HintPoint(x: 10, y: 20), elementWidth: 8, elementHeight: 6),
         ])
         XCTAssertEqual(rig.poster.effects, [])
     }
@@ -389,11 +412,11 @@ final class HintOverlayTests: XCTestCase {
         guard case .showing(let presentation) = shown else {
             return XCTFail("truncation is not a reason to hide the elements that were read")
         }
-        XCTAssertEqual(presentation.markers.map(\.text), ["A"])
+        XCTAssertEqual(presentation.markers.map(\.text), ["F"])
     }
 
     func testAppEntersReceivesAndCancelsHintsWithoutADecision() {
-        let rig = makeRig(elements: tenBoxes())
+        let rig = makeRig(elements: boxes(27))
         let hints: any HintOverlayControlling = rig.controller
         _ = hints.refreshClickables()
         _ = rig.interpreter.handleKeyDown(KeyEvent("F"), cache: safariFocus)
@@ -401,17 +424,18 @@ final class HintOverlayTests: XCTestCase {
         guard case .showing(let presentation) = hints.enterHint(.command) else {
             return XCTFail("enterHint should show the cached labels")
         }
-        XCTAssertEqual(presentation.markers.count, 10)
+        XCTAssertEqual(presentation.markers.count, 27)
         XCTAssertEqual(presentation.policy, .hintLabels)
         XCTAssertEqual(rig.querier.reads, 1)
         XCTAssertEqual(rig.poster.effects, [])
         XCTAssertEqual(rig.interpreter.mode, .hint(.command))
 
-        let partial = hints.receiveHintKey(KeyEvent("a"))
+        let partial = hints.receiveHintKey(KeyEvent("z"))
         guard case .showing(let filtered) = partial else {
             return XCTFail("a prefix should stay inside the direct key method, got \(partial)")
         }
-        XCTAssertEqual(filtered.markers.map(\.text), ["AA", "AS"])
+        XCTAssertEqual(filtered.markers.count, 2)
+        XCTAssertTrue(filtered.markers.allSatisfy { $0.text.hasPrefix("Z") })
         XCTAssertEqual(hints.cancelHint(), .cancelled(.dismissed))
         XCTAssertEqual(rig.poster.effects, [])
         XCTAssertEqual(rig.presenter.hides, 1)
@@ -426,7 +450,7 @@ final class HintOverlayTests: XCTestCase {
         _ = hints.enterHint(.plain)
         let effect = plainClick(x: 14, y: 23)
         XCTAssertEqual(
-            hints.receiveHintKey(KeyEvent("a"), keyCode: nil),
+            hints.receiveHintKey(KeyEvent("f"), keyCode: nil),
             .activated(
                 HintActivation(index: 0, click: .plain, point: HintPoint(x: 14, y: 23), identifier: "2/0"),
                 .performed([effect])
@@ -555,7 +579,11 @@ private func oneBox() -> ClickableElement {
 }
 
 private func tenBoxes() -> [ClickableElement] {
-    (0..<10).map { index in
+    boxes(10)
+}
+
+private func boxes(_ count: Int) -> [ClickableElement] {
+    (0..<count).map { index in
         ClickableElement(
             role: "AXLink",
             frame: ElementFrame(x: Double(index) * 30, y: 0, width: 20, height: 10),

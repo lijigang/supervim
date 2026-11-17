@@ -87,12 +87,41 @@ final class HintGeometryTests: XCTestCase {
         XCTAssertEqual(
             ModeTrace.formatHintScan(
                 bundleIdentifier: "com.tencent.xinWeChat",
+                window: "focused",
+                found: 1,
                 visited: 40,
                 hits: 0,
                 milliseconds: 12,
-                expansion: "manual"
+                expansion: "manual",
+                retry: "empty"
             ),
-            "hint-scan bundle=com.tencent.xinWeChat visited=40 hits=0 ms=12 expansion=manual"
+            "hint-scan bundle=com.tencent.xinWeChat window=focused found=1 visited=40 hits=0 ms=12 expansion=manual retry=empty"
+        )
+        XCTAssertEqual(
+            ModeTrace.formatHintWindow(source: "windows", found: 0, children: 0),
+            "hint-window source=windows found=0 children=0"
+        )
+        XCTAssertEqual(
+            ModeTrace.formatHintKey(
+                key: "f",
+                mode: "insert",
+                why: "editable-focus",
+                delivery: "passThrough",
+                bundle: "com.tencent.xinWeChat",
+                role: "AXTextArea",
+                subrole: nil,
+                identity: "ax-2",
+                held: "cleared"
+            ),
+            "hint-key key=f mode=insert why=editable-focus delivery=passThrough bundle=com.tencent.xinWeChat role=AXTextArea subrole=- identity=ax-2 held=cleared"
+        )
+        XCTAssertEqual(
+            ModeTrace.formatTapDisabled(reason: "userInput", reenabled: true),
+            "tap-disabled reason=userInput reenabled=1"
+        )
+        XCTAssertEqual(
+            ModeTrace.formatHintBanner(reason: "noTargets"),
+            "hint-banner reason=noTargets"
         )
         XCTAssertEqual(
             ModeTrace.formatHintClick(index: 2, method: "AXPress", x: -300, y: 120),

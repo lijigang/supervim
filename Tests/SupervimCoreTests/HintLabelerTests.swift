@@ -4,9 +4,54 @@ import XCTest
 /// Behavior contract for Vimium-style hint labels.
 /// Labels are generated and filtered here. Nothing is drawn, clicked, or scanned.
 final class HintLabelerTests: XCTestCase {
-    func testAlphabetIsTheHomeRowInVimiumOrder() {
-        XCTAssertEqual(HintLabeler.alphabet, "asdfghjkl")
+    func testAlphabetIsHomeRowThenUpperThenLower() {
+        XCTAssertEqual(HintLabeler.alphabet, "fjdkslaghrueiwotypqvbncmxz")
         XCTAssertEqual(Set(HintLabeler.alphabet).count, HintLabeler.alphabet.count)
+        XCTAssertEqual(HintLabeler.alphabet.count, 26)
+    }
+
+    func testOneTargetUsesTheEasiestLetter() {
+        XCTAssertEqual(HintLabeler(elementCount: 1).labels.map(\.text), ["f"])
+    }
+
+    func testAlphabetSizedSetIsOnlySingleLettersInEaseOrder() {
+        let alphabet = HintLabeler.alphabet
+        let labels = HintLabeler(elementCount: alphabet.count).labels.map(\.text)
+        XCTAssertEqual(labels, alphabet.map { String($0) })
+        XCTAssertTrue(labels.allSatisfy { $0.count == 1 })
+    }
+
+    func testAlphabetPlusOneKeepsSingleLettersAndTwoDoubles() {
+        let alphabet = Array(HintLabeler.alphabet)
+        let labels = HintLabeler(elementCount: alphabet.count + 1).labels.map(\.text)
+        let singles = alphabet.dropLast().map { String($0) }
+        let hardest = String(alphabet.last!)
+        XCTAssertEqual(Array(labels.prefix(singles.count)), singles)
+        XCTAssertEqual(labels.filter { $0.count == 1 }.count, alphabet.count - 1)
+        XCTAssertEqual(labels.filter { $0.count == 2 }.count, 2)
+        XCTAssertEqual(labels.suffix(2).map { $0.first.map(String.init) }, [hardest, hardest])
+        XCTAssertTrue(isPrefixFree(labels))
+    }
+
+    func testLargeCountMaximizesSingleLettersAndStaysPrefixFree() {
+        let width = HintLabeler.alphabet.count
+        let labels = HintLabeler(elementCount: 100).labels.map(\.text)
+        XCTAssertEqual(labels.count, 100)
+        XCTAssertEqual(labels.filter { $0.count == 1 }.count, 23)
+        XCTAssertEqual(labels.filter { $0.count == 2 }.count, 77)
+        XCTAssertEqual(labels.map(\.count).max(), 2)
+        XCTAssertEqual(
+            Array(labels.prefix(width - 3)),
+            Array(HintLabeler.alphabet.prefix(width - 3)).map { String($0) }
+        )
+        XCTAssertTrue(isPrefixFree(labels))
+        XCTAssertEqual(Set(labels).count, labels.count)
+
+        let overflow = HintLabeler(elementCount: 700).labels.map(\.text)
+        XCTAssertEqual(overflow.count, 700)
+        XCTAssertEqual(overflow.filter { $0.count == 1 }.count, 25)
+        XCTAssertTrue(isPrefixFree(overflow))
+        XCTAssertLessThanOrEqual(overflow.map(\.count).max() ?? 0, 3)
     }
 
     func testZeroElementsYieldNoLabels() {
@@ -18,102 +63,65 @@ final class HintLabelerTests: XCTestCase {
         XCTAssertEqual(HintLabeler(elementCount: -100).labels, [])
     }
 
-    func testOneElementUsesTheSingleLetterA() {
-        assertLabels(HintLabeler(elementCount: 1), ["a"])
+    func testTwoElementsUseTheTwoEasiestLetters() {
+        assertLabels(HintLabeler(elementCount: 2), ["f", "j"])
     }
 
-    func testTwoElementsKeepTheFirstGeneratedLettersThenSortThem() {
-        // Generation order starts a, s, d, ... The first two are kept, then sorted.
-        assertLabels(HintLabeler(elementCount: 2), ["a", "s"])
-    }
-
-    func testNineElementsAreSingleLetters() {
+    func testNineElementsAreTheFirstNineSingleLetters() {
         assertLabels(
             HintLabeler(elementCount: 9),
-            ["a", "d", "f", "g", "h", "j", "k", "l", "s"]
+            ["f", "j", "d", "k", "s", "l", "a", "g", "h"]
         )
     }
 
-    func testTenElementsIntroduceTwoCharacterLabels() {
+    func testTenElementsStaySingleLetters() {
         assertLabels(
             HintLabeler(elementCount: 10),
-            ["aa", "d", "f", "g", "h", "j", "k", "l", "s", "as"]
+            ["f", "j", "d", "k", "s", "l", "a", "g", "h", "r"]
         )
     }
 
-    func testEightyOneElementsAreAllLengthTwo() {
+    func testEightyOneElementsStayPrefixFree() {
         let labeler = HintLabeler(elementCount: 81)
-        assertGeneratedContract(
-            labeler,
-            lengths: [2],
-            head: ["aa", "da", "fa", "ga", "ha"],
-            tail: ["hs", "js", "ks", "ls", "ss"],
-            checksum: 424044520
-        )
+        let texts = labeler.labels.map(\.text)
+        XCTAssertEqual(texts.count, 81)
+        XCTAssertEqual(texts.filter { $0.count == 1 }.count, 23)
+        XCTAssertTrue(isPrefixFree(texts))
+        XCTAssertEqual(labeler, HintLabeler(elementCount: 81))
     }
 
-    func testEightyTwoElementsSpillTwoLabelsIntoLengthThree() {
-        let labeler = HintLabeler(elementCount: 82)
-        assertGeneratedContract(
-            labeler,
-            lengths: [2, 3],
-            lengthCounts: [2: 80, 3: 2],
-            head: ["aaa", "da", "fa", "ga", "ha"],
-            tail: ["hs", "js", "ks", "ls", "ss"],
-            checksum: 547292145
-        )
-    }
-
-    func testSevenHundredTwentyNineElementsAreAllLengthThree() {
-        let labeler = HintLabeler(elementCount: 729)
-        assertGeneratedContract(
-            labeler,
-            lengths: [3],
-            head: ["aaa", "daa", "faa", "gaa", "haa"],
-            tail: ["hss", "jss", "kss", "lss", "sss"],
-            checksum: 391339969
-        )
-    }
-
-    func testSevenHundredThirtyElementsSpillTwoLabelsIntoLengthFour() {
-        let labeler = HintLabeler(elementCount: 730)
-        assertGeneratedContract(
-            labeler,
-            lengths: [3, 4],
-            lengthCounts: [3: 728, 4: 2],
-            head: ["aaaa", "daa", "faa", "gaa", "haa"],
-            tail: ["hss", "jss", "kss", "lss", "sss"],
-            checksum: 37640849
-        )
-    }
-
-    func testOneThousandElementsStayShortPrefixFreeAndDeterministic() {
+    func testOneThousandElementsStayPrefixFreeAndDeterministic() {
         let labeler = HintLabeler(elementCount: 1000)
-        assertGeneratedContract(
-            labeler,
-            lengths: [3, 4],
-            head: ["aaaa", "daa", "adaa", "faa", "afaa"],
-            tail: ["jss", "kss", "lss", "sss", "asss"],
-            checksum: 664328167
-        )
+        let texts = labeler.labels.map(\.text)
+        XCTAssertEqual(texts.count, 1000)
+        XCTAssertTrue(isPrefixFree(texts))
+        XCTAssertLessThanOrEqual(texts.map(\.count).max() ?? 0, 3)
         XCTAssertEqual(labeler, HintLabeler(elementCount: 1000))
     }
 
-    func testFiveThousandElementsStayPrefixFree() {
-        let labeler = HintLabeler(elementCount: 5000)
-        assertGeneratedContract(
-            labeler,
-            lengths: [3, 4],
-            lengthCounts: [3: 195, 4: 4805],
-            head: ["aaaa"],
-            tail: ["ssss"],
-            checksum: 908137806
-        )
+    func testCustomAlphabetMaximizesSinglesForOneSizeAndSizePlusOne() {
+        XCTAssertEqual(HintLabeler(elementCount: 1, alphabet: "fjdk").labels.map(\.text), ["f"])
+        XCTAssertEqual(HintLabeler(elementCount: 4, alphabet: "abcd").labels.map(\.text), ["a", "b", "c", "d"])
+        let plus = HintLabeler(elementCount: 5, alphabet: "abcd").labels.map(\.text)
+        XCTAssertEqual(plus, ["a", "b", "c", "da", "db"])
+        XCTAssertTrue(isPrefixFree(plus))
+        let square = HintLabeler(elementCount: 16, alphabet: "abcd").labels.map(\.text)
+        XCTAssertEqual(square.filter { $0.count == 1 }.count, 0)
+        XCTAssertEqual(square.filter { $0.count == 2 }.count, 16)
+        XCTAssertEqual(square.first, "aa")
+        XCTAssertEqual(square.last, "dd")
+        XCTAssertTrue(isPrefixFree(square))
+        let spill = HintLabeler(elementCount: 17, alphabet: "abcd").labels.map(\.text)
+        XCTAssertEqual(spill.filter { $0.count == 1 }.count, 3)
+        XCTAssertEqual(spill.filter { $0.count == 2 }.count, 0)
+        XCTAssertEqual(spill.filter { $0.count == 3 }.count, 14)
+        XCTAssertEqual(Array(spill.prefix(3)), ["a", "b", "c"])
+        XCTAssertTrue(isPrefixFree(spill))
     }
 
     func testLabelsAreStoredLowercaseAndDisplayedUppercase() {
         let labels = HintLabeler(elementCount: 10).labels
-        XCTAssertEqual(labels.map(\.text), ["aa", "d", "f", "g", "h", "j", "k", "l", "s", "as"])
+        XCTAssertEqual(labels.map(\.text), ["f", "j", "d", "k", "s", "l", "a", "g", "h", "r"])
         for label in labels {
             XCTAssertEqual(label.text, label.text.lowercased(), label.text)
             XCTAssertEqual(label.displayText, label.text.uppercased(), label.text)
@@ -186,36 +194,36 @@ final class HintLabelerTests: XCTestCase {
     }
 
     func testPartialPrefixListsMatchesWithoutSelecting() {
-        var labeler = HintLabeler(elementCount: 10)
+        var labeler = HintLabeler(elementCount: 3, alphabet: "ab")
         let matches = [
-            HintLabel(index: 0, text: "aa"),
-            HintLabel(index: 9, text: "as"),
+            HintLabel(index: 1, text: "ba"),
+            HintLabel(index: 2, text: "bb"),
         ]
         XCTAssertEqual(
-            labeler.handle(.character("A")),
-            .pending(HintQuery(typed: "a", matches: matches, selectedIndex: nil))
+            labeler.handle(.character("B")),
+            .pending(HintQuery(typed: "b", matches: matches, selectedIndex: nil))
         )
         XCTAssertNil(labeler.filter.selectedIndex)
-        XCTAssertEqual(labeler.filter.matchingIndices, [0, 9])
+        XCTAssertEqual(labeler.filter.matchingIndices, [1, 2])
     }
 
     func testCompletingALabelSelectsItsElementIndex() {
-        var labeler = HintLabeler(elementCount: 10)
-        _ = labeler.handle(.character("a"))
+        var labeler = HintLabeler(elementCount: 3, alphabet: "ab")
+        _ = labeler.handle(.character("b"))
         XCTAssertEqual(
-            labeler.handle(.character("s")),
+            labeler.handle(.character("a")),
             .selected(HintQuery(
-                typed: "as",
-                matches: [HintLabel(index: 9, text: "as")],
-                selectedIndex: 9
+                typed: "ba",
+                matches: [HintLabel(index: 1, text: "ba")],
+                selectedIndex: 1
             ))
         )
     }
 
     func testSiblingLabelIsSelectedOnTheOtherBranch() {
-        var labeler = HintLabeler(elementCount: 10)
-        _ = labeler.handle(.character("a"))
-        XCTAssertEqual(labeler.handle(.character("a")).selectedIndex, 0)
+        var labeler = HintLabeler(elementCount: 3, alphabet: "ab")
+        _ = labeler.handle(.character("b"))
+        XCTAssertEqual(labeler.handle(.character("b")).selectedIndex, 2)
     }
 
     func testUniquePartialPrefixDoesNotSelect() {
@@ -327,14 +335,14 @@ final class HintLabelerTests: XCTestCase {
     }
 
     func testNoMatchLeavesTheTypedPrefixUntouched() {
-        var labeler = HintLabeler(elementCount: 10)
+        var labeler = HintLabeler(elementCount: 3, alphabet: "ab")
         XCTAssertEqual(
-            labeler.handle(.character("a")),
+            labeler.handle(.character("b")),
             .pending(HintQuery(
-                typed: "a",
+                typed: "b",
                 matches: [
-                    HintLabel(index: 0, text: "aa"),
-                    HintLabel(index: 9, text: "as"),
+                    HintLabel(index: 1, text: "ba"),
+                    HintLabel(index: 2, text: "bb"),
                 ],
                 selectedIndex: nil
             ))
@@ -345,13 +353,13 @@ final class HintLabelerTests: XCTestCase {
         XCTAssertEqual(labeler.handle(.character(" ")), .noMatch)
         XCTAssertEqual(labeler.handle(.character("İ")), .noMatch)
         XCTAssertEqual(labeler, before)
-        XCTAssertEqual(labeler.typed, "a")
-        XCTAssertEqual(labeler.filter.matchingIndices, [0, 9])
+        XCTAssertEqual(labeler.typed, "b")
+        XCTAssertEqual(labeler.filter.matchingIndices, [1, 2])
     }
 
     func testInvalidCharacterOnAnEmptyPrefixIsNoMatch() {
         var labeler = HintLabeler(elementCount: 4)
-        XCTAssertEqual(labeler.labels.map(\.text), ["a", "d", "f", "s"])
+        XCTAssertEqual(labeler.labels.map(\.text), ["f", "j", "d", "k"])
         let before = labeler
         XCTAssertEqual(labeler.handle(.character("z")), .noMatch)
         XCTAssertEqual(labeler.handle(.character("1")), .noMatch)
@@ -361,34 +369,34 @@ final class HintLabelerTests: XCTestCase {
 
     func testCharacterAfterACompletedLabelIsNoMatch() {
         var labeler = HintLabeler(elementCount: 1)
-        XCTAssertNotNil(labeler.handle(.character("a")).selectedIndex)
+        XCTAssertNotNil(labeler.handle(.character("f")).selectedIndex)
         let before = labeler
         XCTAssertEqual(labeler.handle(.character("a")), .noMatch)
         XCTAssertEqual(labeler, before)
     }
 
     func testBackspaceRemovesTheLastTypedCharacter() {
-        var labeler = HintLabeler(elementCount: 10)
+        var labeler = HintLabeler(elementCount: 3, alphabet: "ab")
+        _ = labeler.handle(.character("b"))
         _ = labeler.handle(.character("a"))
-        _ = labeler.handle(.character("s"))
-        XCTAssertEqual(labeler.filter.selectedIndex, 9)
+        XCTAssertEqual(labeler.filter.selectedIndex, 1)
         XCTAssertEqual(
             labeler.handle(.backspace),
             .pending(HintQuery(
-                typed: "a",
+                typed: "b",
                 matches: [
-                    HintLabel(index: 0, text: "aa"),
-                    HintLabel(index: 9, text: "as"),
+                    HintLabel(index: 1, text: "ba"),
+                    HintLabel(index: 2, text: "bb"),
                 ],
                 selectedIndex: nil
             ))
         )
-        XCTAssertEqual(labeler.typed, "a")
+        XCTAssertEqual(labeler.typed, "b")
     }
 
     func testBackspaceOnAnEmptyPrefixKeepsEveryLabel() {
         var labeler = HintLabeler(elementCount: 3)
-        XCTAssertEqual(labeler.labels.map(\.text), ["a", "d", "s"])
+        XCTAssertEqual(labeler.labels.map(\.text), ["f", "j", "d"])
         let before = labeler
         XCTAssertEqual(labeler.handle(.backspace), .pending(before.filter))
         XCTAssertEqual(labeler.handle(.backspace), .pending(before.filter))
@@ -417,7 +425,10 @@ final class HintLabelerTests: XCTestCase {
     }
 
     func testBackspaceCanUndoASelectionAndChooseAnotherLabel() {
-        var labeler = HintLabeler(elementCount: 82)
+        var labeler = HintLabeler(labels: [
+            HintLabel(index: 0, text: "aaa"),
+            HintLabel(index: 73, text: "aas"),
+        ])
         _ = labeler.handle(.character("a"))
         _ = labeler.handle(.character("a"))
         XCTAssertEqual(labeler.filter.matchingIndices, [0, 73])
@@ -449,13 +460,13 @@ final class HintLabelerTests: XCTestCase {
     func testValueCopiesDoNotShareTypedText() {
         var original = HintLabeler(elementCount: 10)
         var copy = original
-        XCTAssertEqual(copy.handle(.character("d")).selectedIndex, 1)
+        XCTAssertEqual(copy.handle(.character("j")).selectedIndex, 1)
         XCTAssertEqual(original.typed, "")
         XCTAssertEqual(original.filter.matches.count, 10)
-        XCTAssertEqual(copy.typed, "d")
-        _ = original.handle(.character("a"))
-        XCTAssertEqual(copy.typed, "d")
-        XCTAssertEqual(original.typed, "a")
+        XCTAssertEqual(copy.typed, "j")
+        _ = original.handle(.character("f"))
+        XCTAssertEqual(copy.typed, "j")
+        XCTAssertEqual(original.typed, "f")
     }
 
     func testPrefixFreeHelperRejectsALabelThatPrefixesAnother() {

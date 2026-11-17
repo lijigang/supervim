@@ -157,10 +157,10 @@ public struct HintSession: Sendable {
     private var labeler: HintLabeler
     private var active: Bool
 
-    public init(targets: [HintTarget], click: HintClick) {
+    public init(targets: [HintTarget], click: HintClick, alphabet: String = HintLabeler.alphabet) {
         let usable = targets.filter(\.frame.isUsable)
         self.targets = usable
-        self.labeler = HintLabeler(elementCount: usable.count)
+        self.labeler = HintLabeler(elementCount: usable.count, alphabet: alphabet)
         self.click = click
         self.active = !usable.isEmpty
     }

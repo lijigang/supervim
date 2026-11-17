@@ -70,21 +70,76 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
     }
 
     public func readFrontmostWindow(maxNodes: Int, maxDepth: Int) -> AccessibilityRead<AccessibilityElement> {
+        let choices = readWindowChoices(maxNodes: maxNodes, maxDepth: maxDepth)
+        if let choice = choices.first(where: { $0.found && ($0.element?.children.isEmpty == false) }),
+           let element = choice.element {
+            return .value(element)
+        }
+        if let application = readApplicationElement(maxNodes: maxNodes, maxDepth: maxDepth),
+           !application.children.isEmpty {
+            return .value(application)
+        }
+        if let choice = choices.first(where: \.found), let element = choice.element {
+            return .value(element)
+        }
+        return .unavailable
+    }
+
+    public func readWindowChoices(maxNodes: Int, maxDepth: Int) -> [AccessibilityWindowChoice] {
         guard AXIsProcessTrusted() else {
-            return .unavailable
+            return [AccessibilityWindowChoice(source: "focused", found: false, element: nil)]
         }
         let system = AXUIElementCreateSystemWide()
         guard let application = copyElement(system, kAXFocusedApplicationAttribute) else {
-            return .unavailable
-        }
-        let window = copyElement(application, kAXFocusedWindowAttribute)
-            ?? copyElement(application, kAXMainWindowAttribute)
-        guard let window else {
-            return .unavailable
+            return [AccessibilityWindowChoice(source: "focused", found: false, element: nil)]
         }
         let limits = TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth)
+        var choices: [AccessibilityWindowChoice] = []
+        var seen: [AXUIElement] = []
+        func append(_ element: AXUIElement?, source: String, recordMiss: Bool) {
+            guard let element else {
+                if recordMiss {
+                    choices.append(AccessibilityWindowChoice(source: source, found: false, element: nil))
+                }
+                return
+            }
+            if seen.contains(where: { sameAXElement($0, element) }) {
+                return
+            }
+            seen.append(element)
+            choices.append(AccessibilityWindowChoice(
+                source: source,
+                found: true,
+                element: copiedTree(element, limits: limits)
+            ))
+        }
+        append(copyElement(application, kAXFocusedWindowAttribute), source: "focused", recordMiss: true)
+        append(copyElement(application, kAXMainWindowAttribute), source: "main", recordMiss: true)
+        let windows = copyElements(application, kAXWindowsAttribute)
+        if windows.isEmpty {
+            choices.append(AccessibilityWindowChoice(source: "windows", found: false, element: nil))
+        } else {
+            for window in windows.prefix(8) {
+                append(window, source: "windows", recordMiss: false)
+            }
+        }
+        return choices
+    }
+
+    public func readApplicationElement(maxNodes: Int, maxDepth: Int) -> AccessibilityElement? {
+        guard AXIsProcessTrusted() else {
+            return nil
+        }
+        let system = AXUIElementCreateSystemWide()
+        guard let application = copyElement(system, kAXFocusedApplicationAttribute) else {
+            return nil
+        }
+        return copiedTree(application, limits: TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth))
+    }
+
+    private func copiedTree(_ element: AXUIElement, limits: TreeWalkLimits) -> AccessibilityElement {
         var remaining = limits.maxNodes
-        return .value(snapshotTree(window, depth: 0, limits: limits, remaining: &remaining))
+        return snapshotTree(element, depth: 0, limits: limits, remaining: &remaining)
     }
 
     private func snapshot(of element: AXUIElement, identify: Bool = false) -> AccessibilityElement {
@@ -285,44 +340,42 @@ public final class AXFocusSignal: FocusChangeSignaling, @unchecked Sendable {
     }
 }
 
-/// Turns on the accessibility tree for one process, at most once.
-/// Manual accessibility is tried first. Enhanced mode is the fallback, and
-/// only when the caller says the scan was empty. Enhanced mode can slow
-/// window animation, so a process whose manual request succeeded is left alone.
+/// Turns on the accessibility tree for one process.
+/// Each attribute is written at most once. Manual accessibility is the first
+/// request. Enhanced mode is written later when the caller still has an empty
+/// tree: a successful manual write does not fill Qt's tree by itself.
+/// Enhanced mode can slow window animation, so it is not set on the first try.
 private final class AccessibilityExpander: @unchecked Sendable {
     private let lock = NSLock()
     private var manual = Set<pid_t>()
     private var enhanced = Set<pid_t>()
-    private var manualSucceeded = Set<pid_t>()
 
+    /// Manual accessibility is tried on the first request. Enhanced mode is
+    /// separate: a successful manual write does not mean Qt filled the tree,
+    /// so a later request with `allowEnhanced` still sets
+    /// `AXEnhancedUserInterface` once. Each attribute is written at most once
+    /// per process.
     func expand(_ application: AXUIElement, pid: pid_t, allowEnhanced: Bool) -> AccessibilityTreeExpansion {
         lock.lock()
         let needsManual = manual.insert(pid).inserted
-        let manualAlreadyWorked = manualSucceeded.contains(pid)
         lock.unlock()
-        if needsManual {
-            if setBool(application, "AXManualAccessibility", true) {
-                lock.lock()
-                manualSucceeded.insert(pid)
-                lock.unlock()
-                return .manual
-            }
-        } else if manualAlreadyWorked {
-            return .unchanged
+        var wroteManual = false
+        if needsManual, setBool(application, "AXManualAccessibility", true) {
+            wroteManual = true
         }
         guard allowEnhanced else {
-            return .unchanged
+            return wroteManual ? .manual : .unchanged
         }
         lock.lock()
         let needsEnhanced = enhanced.insert(pid).inserted
         lock.unlock()
         guard needsEnhanced else {
-            return .unchanged
+            return wroteManual ? .manual : .unchanged
         }
         if setBool(application, "AXEnhancedUserInterface", true) {
             return .enhanced
         }
-        return .unchanged
+        return wroteManual ? .manual : .unchanged
     }
 
     private func setBool(_ element: AXUIElement, _ name: String, _ value: Bool) -> Bool {
@@ -440,6 +493,17 @@ private func copyActions(_ element: AXUIElement) -> [String] {
         return []
     }
     return names as? [String] ?? []
+}
+
+private func sameAXElement(_ lhs: AXUIElement, _ rhs: AXUIElement) -> Bool {
+    CFEqual(unsafeBitCast(lhs, to: CFTypeRef.self), unsafeBitCast(rhs, to: CFTypeRef.self))
+}
+
+private func copyElements(_ element: AXUIElement, _ attribute: String) -> [AXUIElement] {
+    guard let value = copyAttribute(element, attribute as CFString) else {
+        return []
+    }
+    return value as? [AXUIElement] ?? []
 }
 
 private func copyChildren(_ element: AXUIElement) -> [AXUIElement] {

@@ -45,6 +45,30 @@ public struct FocusFrame: Equatable, Sendable {
         }
         return x >= self.x && x <= self.x + width && y >= self.y && y <= self.y + height
     }
+
+    /// True when the overlap covers at least half of the smaller rectangle.
+    /// A missing or empty rectangle does not overlap.
+    public func overlaps(_ other: FocusFrame, minimumRatio: Double = 0.5) -> Bool {
+        guard width > 0, height > 0, other.width > 0, other.height > 0,
+              x.isFinite, y.isFinite, other.x.isFinite, other.y.isFinite
+        else {
+            return false
+        }
+        let left = max(x, other.x)
+        let right = min(x + width, other.x + other.width)
+        let top = max(y, other.y)
+        let bottom = min(y + height, other.y + other.height)
+        let overlapWidth = right - left
+        let overlapHeight = bottom - top
+        guard overlapWidth > 0, overlapHeight > 0 else {
+            return false
+        }
+        let smaller = min(width * height, other.width * other.height)
+        guard smaller > 0 else {
+            return false
+        }
+        return (overlapWidth * overlapHeight) / smaller >= minimumRatio
+    }
 }
 
 /// Focus and frontmost app, already read by something outside the event hook.
@@ -121,10 +145,14 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     private var machine = ModeMachine()
     private var parser: KeyParser<Clock>
     private let commands = CommandMap()
-    /// Set when Esc leaves Insert on a named element. The same element does not
-    /// auto-enter Insert again until the identity changes, `i` is pressed, or
-    /// the pointer clicks inside that element's frame.
-    private var heldNormalIdentity: String?
+    /// Set when Esc leaves Insert on a named element. The same field does not
+    /// auto-enter Insert again until a different field is focused, `i` is
+    /// pressed, or the pointer clicks inside that field's frame.
+    ///
+    /// WeChat replaces the focused accessibility object on every read, so the
+    /// token from `CFEqual` changes. The hold also matches bundle, role, and an
+    /// overlapping frame, and a read with no frame is not treated as a new field.
+    private var heldComposer: HeldComposer?
 
     public init(settings: Settings = .defaults, clock: Clock, cache: CachedFocus = .unknown) {
         self.clock = clock
@@ -178,6 +206,7 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
 
     public func handleKeyDown(_ event: KeyEvent, cache: CachedFocus) -> EventDecision {
         let previous = machine.mode
+        let holdBefore = heldComposer
         let transition = apply(cache)
         let decision: EventDecision
         if shouldPause(event) {
@@ -197,6 +226,9 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
             decision = decisionFromParser(event, transition: transition)
         }
         trace(triggerText(event), from: previous)
+        if let line = hintKeyLine(event, decision: decision, hold: holdLabel(before: holdBefore)) {
+            ModeTrace.noteLine(line)
+        }
         return decision
     }
 
@@ -239,15 +271,14 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     public func acceptPointerClick(x: Double, y: Double) -> EventDecision {
         let previous = machine.mode
         guard let frame = cache.frame,
-              heldNormalIdentity != nil,
-              cache.elementIdentity == heldNormalIdentity,
+              heldComposer != nil,
               cache.editability == .editable,
               frame.contains(x: x, y: y)
         else {
             trace("click", from: previous)
             return EventDecision(delivery: .passThrough, mode: machine.mode)
         }
-        heldNormalIdentity = nil
+        heldComposer = nil
         let decision = applyCache(cache)
         trace("click", from: previous)
         return decision
@@ -255,7 +286,7 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
 
     /// `gi` drops the Esc hold so the following focus read can enter Insert.
     public func releaseHeldInput() {
-        heldNormalIdentity = nil
+        heldComposer = nil
     }
 
     public func replaceSettings(_ settings: Settings) {
@@ -311,29 +342,63 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
         return Transition(effects: effects, overlay: overlay(from: effects))
     }
 
-    /// A different named element clears the Esc hold. A missing name does not:
-    /// a failed or partial read is not "the caret entered a new field".
+    /// A different field clears the Esc hold. A missing name does not, and neither
+    /// does a new token for the same role and an overlapping frame. WeChat issues
+    /// a fresh accessibility object for the composer on every query.
     private func noteIdentityChange(_ next: CachedFocus) {
-        guard let identity = next.elementIdentity else {
+        guard heldComposer != nil else {
             return
         }
-        if heldNormalIdentity != identity {
-            heldNormalIdentity = nil
+        if sameHeldComposer(next) {
+            return
         }
+        heldComposer = nil
     }
 
-    /// While Esc is holding an element, that same element (or an unnamed read)
-    /// is shown to the mode machine as not editable, so Normal commands keep working.
-    /// A cache with no identity and no hold keeps the previous rule.
+    /// While Esc is holding the composer, that field is shown to the mode machine
+    /// as not editable, so Normal commands keep working. A cache with no identity
+    /// and no hold keeps the previous rule.
     private func editabilitySeenByMachine(_ next: CachedFocus) -> FocusEditability {
-        guard let held = heldNormalIdentity else {
+        guard heldComposer != nil else {
             return next.editability
         }
-        let sameOrUnnamed = next.elementIdentity == held || next.elementIdentity == nil
-        if sameOrUnnamed, next.editability != .notEditable {
+        if sameHeldComposer(next), next.editability != .notEditable {
             return .notEditable
         }
         return next.editability
+    }
+
+    private func sameHeldComposer(_ next: CachedFocus) -> Bool {
+        guard let held = heldComposer else {
+            return false
+        }
+        if next.elementIdentity == nil || next.elementIdentity == held.identity {
+            return true
+        }
+        guard next.bundleIdentifier == held.bundleIdentifier else {
+            return false
+        }
+        guard rolesMatch(held, next) else {
+            return false
+        }
+        guard framesMatch(held.frame, next.frame) else {
+            return false
+        }
+        return next.editability != .notEditable
+    }
+
+    private func rolesMatch(_ held: HeldComposer, _ next: CachedFocus) -> Bool {
+        guard let role = next.role else {
+            return true
+        }
+        return role == held.role && next.subrole == held.subrole
+    }
+
+    private func framesMatch(_ held: FocusFrame?, _ next: FocusFrame?) -> Bool {
+        guard let held, let next else {
+            return true
+        }
+        return held.overlaps(next)
     }
 
     private func decisionWithoutParser(_ event: KeyEvent, transition: Transition) -> EventDecision {
@@ -418,7 +483,13 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
         effects: [ModeEffect]
     ) -> EventDecision {
         if effects.contains(.blurFocus), let identity = cache.elementIdentity {
-            heldNormalIdentity = identity
+            heldComposer = HeldComposer(
+                identity: identity,
+                bundleIdentifier: cache.bundleIdentifier,
+                role: cache.role,
+                subrole: cache.subrole,
+                frame: cache.frame
+            )
         }
         return EventDecision(
             delivery: delivery,
@@ -427,6 +498,76 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
             overlay: overlay,
             modeEffects: effects
         )
+    }
+
+    private func holdLabel(before: HeldComposer?) -> String {
+        guard before != nil else {
+            return "none"
+        }
+        guard heldComposer != nil else {
+            return "cleared"
+        }
+        if cache.elementIdentity == nil {
+            return "unnamed"
+        }
+        return "kept"
+    }
+
+    private func hintKeyLine(_ event: KeyEvent, decision: EventDecision, hold: String) -> String? {
+        guard event.modifiers.intersection([.control, .option, .command]).isEmpty,
+              case .character(let character) = event.identity,
+              character == "f" || character == "F"
+        else {
+            return nil
+        }
+        let why: String
+        if settings.isExcluded(bundleIdentifier: cache.bundleIdentifier) {
+            why = "excluded"
+        } else if machine.mode == .paused {
+            why = "paused"
+        } else if case .beginHint = decision.overlay {
+            if cache.editability == .editable && (hold == "kept" || hold == "unnamed") {
+                why = "held-normal"
+            } else {
+                why = "normal"
+            }
+        } else if case .hint = machine.mode {
+            why = "hint"
+        } else {
+            switch cache.editability {
+            case .unknown:
+                why = "unknown-focus"
+            case .editable:
+                why = "editable-focus"
+            case .notEditable:
+                why = "normal"
+            }
+        }
+        let delivery = decision.delivery == .swallow ? "swallow" : "passThrough"
+        return ModeTrace.formatHintKey(
+            key: String(character),
+            mode: modeName(machine.mode),
+            why: why,
+            delivery: delivery,
+            bundle: cache.bundleIdentifier,
+            role: cache.role,
+            subrole: cache.subrole,
+            identity: cache.elementIdentity,
+            held: hold
+        )
+    }
+
+    private func modeName(_ mode: SupervimMode) -> String {
+        switch mode {
+        case .normal:
+            return "normal"
+        case .insert:
+            return "insert"
+        case .hint:
+            return "hint"
+        case .paused:
+            return "paused"
+        }
     }
 
     private func triggerText(_ event: KeyEvent) -> String {
@@ -490,5 +631,13 @@ extension EventInterpreter {
     private struct Transition {
         var effects: [ModeEffect]
         var overlay: OverlayUpdate?
+    }
+
+    private struct HeldComposer: Equatable {
+        var identity: String
+        var bundleIdentifier: String
+        var role: String?
+        var subrole: String?
+        var frame: FocusFrame?
     }
 }

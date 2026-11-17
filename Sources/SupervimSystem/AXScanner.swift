@@ -397,12 +397,57 @@ public enum AccessibilityTreeExpansion: Equatable, Sendable {
     case enhanced
 }
 
+/// One window the frontmost app exposed, already copied.
+/// `source` is `focused`, `main`, or `windows`. `found` is false when that
+/// attribute was missing. `element` is nil in that case.
+public struct AccessibilityWindowChoice: Equatable, Sendable {
+    public var source: String
+    public var found: Bool
+    public var element: AccessibilityElement?
+
+    public init(source: String, found: Bool, element: AccessibilityElement?) {
+        self.source = source
+        self.found = found
+        self.element = element
+    }
+}
+
+/// How long a scan waits after it turns an accessibility attribute on.
+/// Qt and WeChat often populate the tree on a later turn of the run loop.
+public enum HintScanTiming {
+    public static let populationDelayMilliseconds = 120
+}
+
+/// Pauses after `AXManualAccessibility` or `AXEnhancedUserInterface` is set.
+/// Tests record the delay and do not sleep. The app uses `AccessibilityTreeSleeper`.
+public protocol AccessibilityTreeWaiting: AnyObject, Sendable {
+    func waitForAccessibilityTree(milliseconds: Int)
+}
+
+public final class AccessibilityTreeSleeper: AccessibilityTreeWaiting, @unchecked Sendable {
+    public init() {}
+
+    public func waitForAccessibilityTree(milliseconds: Int) {
+        guard milliseconds > 0 else {
+            return
+        }
+        Thread.sleep(forTimeInterval: Double(milliseconds) / 1000)
+    }
+}
+
 public protocol AccessibilityReading: AnyObject, Sendable {
     func readFocusedElement() -> AccessibilityRead<AccessibilityElement>
     func readFrontmostBundleIdentifier() -> AccessibilityRead<String>
     func readFrontmostWindow(maxNodes: Int, maxDepth: Int) -> AccessibilityRead<AccessibilityElement>
-    /// Ask the frontmost app to expose its tree. Once per process.
-    /// Enhanced mode is only requested when `allowEnhanced` is true.
+    /// Focused window, then main window, then each window in `AXWindows`.
+    /// A missing attribute is a choice with `found == false`, not a skipped slot.
+    func readWindowChoices(maxNodes: Int, maxDepth: Int) -> [AccessibilityWindowChoice]
+    /// The application element, used when every window attribute is empty.
+    func readApplicationElement(maxNodes: Int, maxDepth: Int) -> AccessibilityElement?
+    /// Ask the frontmost app to expose its tree.
+    /// `allowEnhanced == false` tries `AXManualAccessibility` only.
+    /// `allowEnhanced == true` also tries `AXEnhancedUserInterface` when the
+    /// tree is still empty. A successful manual write does not skip enhanced.
     func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion
 }
 
@@ -410,6 +455,21 @@ extension AccessibilityReading {
     public func expandAccessibilityTree(allowEnhanced: Bool) -> AccessibilityTreeExpansion {
         _ = allowEnhanced
         return .unchanged
+    }
+
+    public func readWindowChoices(maxNodes: Int, maxDepth: Int) -> [AccessibilityWindowChoice] {
+        switch readFrontmostWindow(maxNodes: maxNodes, maxDepth: maxDepth) {
+        case .unavailable:
+            return [AccessibilityWindowChoice(source: "focused", found: false, element: nil)]
+        case .value(let element):
+            return [AccessibilityWindowChoice(source: "focused", found: true, element: element)]
+        }
+    }
+
+    public func readApplicationElement(maxNodes: Int, maxDepth: Int) -> AccessibilityElement? {
+        _ = maxNodes
+        _ = maxDepth
+        return nil
     }
 }
 
@@ -457,6 +517,8 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
     private let signals: any FocusChangeSignaling
     private let cache: any FocusCacheReplacing
     private let limits: TreeWalkLimits
+    private let waiter: (any AccessibilityTreeWaiting)?
+    private let populationDelayMilliseconds: Int
     private weak var wiring: EventTapWiring?
     private let lock = NSLock()
     private var started = false
@@ -465,12 +527,16 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
         reader: any AccessibilityReading,
         signals: any FocusChangeSignaling,
         cache: any FocusCacheReplacing,
-        limits: TreeWalkLimits = .standard
+        limits: TreeWalkLimits = .standard,
+        waiter: (any AccessibilityTreeWaiting)? = nil,
+        populationDelayMilliseconds: Int = HintScanTiming.populationDelayMilliseconds
     ) {
         self.reader = reader
         self.signals = signals
         self.cache = cache
         self.limits = limits
+        self.waiter = waiter
+        self.populationDelayMilliseconds = populationDelayMilliseconds
     }
 
     public func connect(_ wiring: EventTapWiring) {
@@ -515,36 +581,112 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
     public func clickableElements() -> ClickableQuery {
         let started = Date()
         let bundle = frontmostBundle()
-        var expansion = AccessibilityTreeExpansion.unchanged
-        var read = reader.readFrontmostWindow(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth)
-        var counted = count(read)
-        if counted.hits == 0 {
-            expansion = reader.expandAccessibilityTree(allowEnhanced: true)
-            if expansion != .unchanged {
-                read = reader.readFrontmostWindow(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth)
-                counted = count(read)
+        var expansion = "none"
+        var retry = "none"
+        var picked = readChoices()
+        if picked.hits == 0 {
+            let manual = reader.expandAccessibilityTree(allowEnhanced: false)
+            if manual == .manual {
+                expansion = "manual"
+                pauseForTree()
+                picked = readChoices()
+                retry = picked.hits > 0 ? "hits" : "empty"
+            }
+        }
+        if picked.hits == 0 {
+            let enhanced = reader.expandAccessibilityTree(allowEnhanced: true)
+            if enhanced == .enhanced {
+                expansion = expansion == "manual" ? "manual+enhanced" : "enhanced"
+                pauseForTree()
+                picked = readChoices()
+                retry = picked.hits > 0 ? "hits" : "empty"
+            } else if enhanced == .manual && expansion == "none" {
+                expansion = "manual"
+                pauseForTree()
+                picked = readChoices()
+                retry = picked.hits > 0 ? "hits" : "empty"
             }
         }
         let milliseconds = Int((Date().timeIntervalSince(started) * 1000).rounded())
         ModeTrace.noteHintScan(
             bundleIdentifier: bundle,
-            visited: counted.visited,
-            hits: counted.hits,
+            window: picked.window,
+            found: picked.found,
+            visited: picked.visited,
+            hits: picked.hits,
             milliseconds: milliseconds,
-            expansion: expansionName(expansion)
+            expansion: expansion,
+            retry: retry
         )
-        return counted.query
+        return picked.query
     }
 
-    private func expansionName(_ expansion: AccessibilityTreeExpansion) -> String {
-        switch expansion {
-        case .unchanged:
-            return "none"
-        case .manual:
-            return "manual"
-        case .enhanced:
-            return "enhanced"
+    private func pauseForTree() {
+        waiter?.waitForAccessibilityTree(milliseconds: populationDelayMilliseconds)
+    }
+
+    private func readChoices() -> ScanPick {
+        let choices = reader.readWindowChoices(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth)
+        if choices.isEmpty {
+            ModeTrace.noteLine(ModeTrace.formatHintWindow(source: "none", found: 0, children: 0))
         }
+        for choice in choices {
+            let children = choice.element?.children.count ?? 0
+            ModeTrace.noteLine(ModeTrace.formatHintWindow(
+                source: choice.source,
+                found: choice.found ? 1 : 0,
+                children: children
+            ))
+        }
+        var picked = pick(choices)
+        if picked.hits == 0, let application = reader.readApplicationElement(
+            maxNodes: limits.maxNodes,
+            maxDepth: limits.maxDepth
+        ) {
+            ModeTrace.noteLine(ModeTrace.formatHintWindow(
+                source: "application",
+                found: 1,
+                children: application.children.count
+            ))
+            let counted = FocusClassification.countedClickables(in: application, limits: limits)
+            if counted.snapshot.elements.count > 0 || picked.found == 0 {
+                picked = ScanPick(
+                    query: .elements(counted.snapshot),
+                    visited: counted.visited,
+                    hits: counted.snapshot.elements.count,
+                    window: "application",
+                    found: 1
+                )
+            }
+        }
+        return picked
+    }
+
+    private func pick(_ choices: [AccessibilityWindowChoice]) -> ScanPick {
+        var fallback: ScanPick?
+        for choice in choices {
+            guard choice.found, let element = choice.element else {
+                continue
+            }
+            let counted = FocusClassification.countedClickables(in: element, limits: limits)
+            let candidate = ScanPick(
+                query: .elements(counted.snapshot),
+                visited: counted.visited,
+                hits: counted.snapshot.elements.count,
+                window: choice.source,
+                found: 1
+            )
+            if candidate.hits > 0 {
+                return candidate
+            }
+            if fallback == nil {
+                fallback = candidate
+            }
+        }
+        if let fallback {
+            return fallback
+        }
+        return ScanPick(query: .unavailable, visited: 0, hits: 0, window: "missing", found: 0)
     }
 
     private func frontmostBundle() -> String {
@@ -556,25 +698,28 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
         }
     }
 
-    private func count(
-        _ read: AccessibilityRead<AccessibilityElement>
-    ) -> (query: ClickableQuery, visited: Int, hits: Int) {
-        switch read {
-        case .unavailable:
-            return (.unavailable, 0, 0)
-        case .value(let window):
-            let counted = FocusClassification.countedClickables(in: window, limits: limits)
-            return (.elements(counted.snapshot), counted.visited, counted.snapshot.elements.count)
-        }
-    }
-
     public func firstEditableInput() -> EditableInputQuery {
-        switch reader.readFrontmostWindow(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth) {
-        case .unavailable:
-            return .unavailable
-        case .value(let window):
-            return FocusClassification.firstEditableInput(in: window, limits: limits)
+        let choices = reader.readWindowChoices(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth)
+        var fallback: EditableInputQuery?
+        for choice in choices {
+            guard choice.found, let element = choice.element else {
+                continue
+            }
+            let query = FocusClassification.firstEditableInput(in: element, limits: limits)
+            if case .found = query {
+                return query
+            }
+            if fallback == nil {
+                fallback = query
+            }
         }
+        if let fallback {
+            return fallback
+        }
+        if let application = reader.readApplicationElement(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth) {
+            return FocusClassification.firstEditableInput(in: application, limits: limits)
+        }
+        return .unavailable
     }
 
     private func classifiedFocus() -> CachedFocus {
@@ -633,16 +778,33 @@ public final class FocusPipeline: @unchecked Sendable {
         decider: any KeyDeciding,
         reader: any AccessibilityReading,
         signals: any FocusChangeSignaling,
-        limits: TreeWalkLimits = .standard
+        limits: TreeWalkLimits = .standard,
+        waiter: (any AccessibilityTreeWaiting)? = nil,
+        populationDelayMilliseconds: Int = HintScanTiming.populationDelayMilliseconds
     ) {
         let cache = LockedFocusCache()
-        let scanner = AXScanner(reader: reader, signals: signals, cache: cache, limits: limits)
+        let scanner = AXScanner(
+            reader: reader,
+            signals: signals,
+            cache: cache,
+            limits: limits,
+            waiter: waiter,
+            populationDelayMilliseconds: populationDelayMilliseconds
+        )
         let wiring = EventTapWiring(decider: decider, cache: cache, scanner: scanner)
         scanner.connect(wiring)
         self.cache = cache
         self.scanner = scanner
         self.wiring = wiring
     }
+}
+
+private struct ScanPick {
+    var query: ClickableQuery
+    var visited: Int
+    var hits: Int
+    var window: String
+    var found: Int
 }
 
 private struct WalkVisit {

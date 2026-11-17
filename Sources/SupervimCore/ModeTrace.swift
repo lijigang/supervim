@@ -56,32 +56,69 @@ public enum ModeTrace {
 
     public static func noteHintScan(
         bundleIdentifier: String,
+        window: String,
+        found: Int,
         visited: Int,
         hits: Int,
         milliseconds: Int,
-        expansion: String
+        expansion: String,
+        retry: String
     ) {
         guard enabled() else {
             return
         }
         append(formatHintScan(
             bundleIdentifier: bundleIdentifier,
+            window: window,
+            found: found,
             visited: visited,
             hits: hits,
             milliseconds: milliseconds,
-            expansion: expansion
+            expansion: expansion,
+            retry: retry
         ))
     }
 
     public static func formatHintScan(
         bundleIdentifier: String,
+        window: String,
+        found: Int,
         visited: Int,
         hits: Int,
         milliseconds: Int,
-        expansion: String
+        expansion: String,
+        retry: String
     ) -> String {
         let bundle = bundleIdentifier.isEmpty ? "-" : bundleIdentifier
-        return "hint-scan bundle=\(bundle) visited=\(visited) hits=\(hits) ms=\(milliseconds) expansion=\(expansion)"
+        let windowName = window.isEmpty ? "missing" : window
+        return "hint-scan bundle=\(bundle) window=\(windowName) found=\(found) visited=\(visited) hits=\(hits) ms=\(milliseconds) expansion=\(expansion) retry=\(retry)"
+    }
+
+    public static func formatHintWindow(source: String, found: Int, children: Int) -> String {
+        "hint-window source=\(source) found=\(found) children=\(children)"
+    }
+
+    public static func formatHintKey(
+        key: String,
+        mode: String,
+        why: String,
+        delivery: String,
+        bundle: String,
+        role: String?,
+        subrole: String?,
+        identity: String?,
+        held: String
+    ) -> String {
+        let bundleText = bundle.isEmpty ? "-" : bundle
+        return "hint-key key=\(key) mode=\(mode) why=\(why) delivery=\(delivery) bundle=\(bundleText) role=\(shown(role)) subrole=\(shown(subrole)) identity=\(shown(identity)) held=\(held)"
+    }
+
+    public static func formatTapDisabled(reason: String, reenabled: Bool) -> String {
+        "tap-disabled reason=\(reason) reenabled=\(reenabled ? 1 : 0)"
+    }
+
+    public static func formatHintBanner(reason: String) -> String {
+        "hint-banner reason=\(reason)"
     }
 
     public static func formatHintPlace(screen: DisplayFrame, index: Int) -> String {

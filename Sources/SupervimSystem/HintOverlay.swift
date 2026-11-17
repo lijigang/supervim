@@ -180,12 +180,17 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     }
 
     private func begin(_ click: HintClick) -> HintOverlayResult {
+        var current = cache.current()
+        if !Self.hasUsableTarget(current) {
+            current = querier.clickableElements()
+            cache.replace(current)
+        }
         let targets: [HintTarget]
-        switch cache.current() {
+        switch current {
         case .unavailable:
             return stop(.unavailable)
         case .elements(let snapshot):
-            targets = snapshot.elements.compactMap(Self.target(from:))
+            targets = Self.rankedTargets(snapshot.elements)
         }
         let started = HintSession(targets: targets, click: click)
         guard started.isActive else {
@@ -237,6 +242,8 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     private func stop(_ reason: HintCancelReason) -> HintOverlayResult {
         if reason == .noTargets || reason == .unavailable {
             misses?.reportMissingClickableElements()
+            let name = reason == .noTargets ? "noTargets" : "unavailable"
+            ModeTrace.noteLine(ModeTrace.formatHintBanner(reason: name))
         }
         session = nil
         presenter.hideOverlay()
@@ -259,6 +266,45 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
             elementID: activation.identifier,
             canAccessibilityPress: press
         )
+    }
+
+    private static func hasUsableTarget(_ query: ClickableQuery) -> Bool {
+        switch query {
+        case .unavailable:
+            return false
+        case .elements(let snapshot):
+            return snapshot.elements.contains { element in
+                HintRect(
+                    x: element.frame.x,
+                    y: element.frame.y,
+                    width: element.frame.width,
+                    height: element.frame.height
+                ).isUsable
+            }
+        }
+    }
+
+    /// Easiest labels go to the controls `HintRanking` puts first.
+    private static func rankedTargets(_ elements: [ClickableElement]) -> [HintTarget] {
+        let items = elements.enumerated().map { index, element in
+            HintRankItem(
+                role: element.role,
+                subrole: element.subrole,
+                frame: HintRect(
+                    x: element.frame.x,
+                    y: element.frame.y,
+                    width: element.frame.width,
+                    height: element.frame.height
+                ),
+                index: index
+            )
+        }
+        return HintRanking.order(items).compactMap { item in
+            guard elements.indices.contains(item.index) else {
+                return nil
+            }
+            return target(from: elements[item.index])
+        }
     }
 
     private static func target(from element: ClickableElement) -> HintTarget? {
