@@ -73,8 +73,10 @@ private let approvedDependencies: [Int: [Int]] = [
 private let approvedStatus: [Int: String] = {
     var status: [Int: String] = [:]
     for id in 1...15 {
-        status[id] = id == 1 ? "in-progress" : "pending"
+        status[id] = "pending"
     }
+    status[1] = "done"
+    status[2] = "in-progress"
     return status
 }()
 

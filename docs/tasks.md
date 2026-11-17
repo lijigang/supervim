@@ -2,7 +2,7 @@
 
 批准顺序如下。依赖没有满足时，不开始该任务。一个任务一个 PR，评审和所有者确认之后再进入下一个。
 
-任务 1 目前是 `in-progress`。任务 2 到 15 是 `pending`。机器可读的同一份数据在 [`.taskmaster/tasks/tasks.json`](../.taskmaster/tasks/tasks.json)。
+任务 1 已合并，状态是 `done`。任务 2 是 `in-progress`。任务 3 到 15 是 `pending`。机器可读的同一份数据在 [`.taskmaster/tasks/tasks.json`](../.taskmaster/tasks/tasks.json)。
 
 `priority` 只是 task-master 的字段。任务 1 标成 `high`，其余标成 `medium`。执行顺序以依赖为准，不表示其余任务可选。
 
@@ -37,8 +37,8 @@
 
 | ID | 标题 | 依赖 | 状态 |
 | --- | --- | --- | --- |
-| 1 | 工程骨架、文档与 CI | 无 | in-progress |
-| 2 | ModeMachine 模式状态机 | 1 | pending |
+| 1 | 工程骨架、文档与 CI | 无 | done |
+| 2 | ModeMachine 模式状态机 | 1 | in-progress |
 | 3 | KeyParser 按键序列解析 | 1 | pending |
 | 4 | HintLabeler 最短前缀标签 | 1 | pending |
 | 5 | CommandMap 命令映射 | 3 | pending |

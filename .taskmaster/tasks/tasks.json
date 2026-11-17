@@ -2,15 +2,15 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T04:30:00.000Z",
-      "description": "Supervim 已批准任务。任务 1 在评审前保持 in-progress，其余为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T05:00:00.000Z",
+      "description": "Supervim 已批准任务。任务 1 已合并，状态为 done。任务 2 在评审前保持 in-progress。任务 3 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
         "id": 1,
         "title": "工程骨架、文档与 CI",
         "description": "建立 SwiftPM 工程、菜单栏应用包脚手架、XCTest、批准文档和 macos-latest 构建测试。",
-        "status": "in-progress",
+        "status": "done",
         "dependencies": [],
         "priority": "high",
         "details": "创建 SupervimCore 纯逻辑库、SupervimSystem 系统适配库、Supervim 可执行文件。可执行文件是菜单栏占位：LSUIElement 为真，运行时使用 accessory 激活策略，菜单只有退出。组装脚本生成未签名的 Supervim.app。测试先失败再实现，覆盖清单校验、属性列表解码、启动预检和任务依赖图。写入中文宪法、规格、计划和可读任务列表。GitHub Actions 在 push 与 pull request 上执行 swift build、swift test 并组装 .app。不实现任务 2 到 15，不制作 DMG，不合并。",
@@ -21,10 +21,10 @@
         "id": 2,
         "title": "ModeMachine 模式状态机",
         "description": "实现 Normal、Insert、Hint、Paused 四种模式及合法转移。",
-        "status": "pending",
+        "status": "in-progress",
         "dependencies": [1],
         "priority": "medium",
-        "details": "纯逻辑状态机放在 SupervimCore。默认进入 Normal。可编辑焦点自动进入 Insert；Esc 回到 Normal 并离开输入焦点；i 手动进入 Insert。Hint 用于 f/F 标签。Paused 暂停拦截。未知焦点不得进入会吞键的模式。系统接口留在协议后面。本任务在任务 1 评审确认前不得开始。",
+        "details": "纯逻辑状态机放在 SupervimCore。默认进入 Normal。可编辑焦点自动进入 Insert；Esc 回到 Normal 并离开输入焦点；i 手动进入 Insert。Hint 用于 f/F 标签。Paused 暂停拦截。未知焦点不得进入会吞键的模式。系统接口留在协议后面。任务 1 已合并，本任务进行中，仍不连接真实事件钩子。",
         "testStrategy": "用 XCTest 覆盖合法转移、Esc、手动 Insert，以及未知可编辑性时不吞键。不连接真实事件钩子。",
         "subtasks": []
       },
