@@ -2,11 +2,12 @@
 import AppKit
 import SupervimCore
 
-/// Transparent hint labels. The panel does not activate the app and does not
-/// become key, so the frontmost window keeps focus. Mouse events pass through.
-/// Coordinates stay in the space the markers already use. This file does not
-/// convert them, and placement on a real display is not measured here.
-public final class NonActivatingHintPanel: OverlayPresenting, @unchecked Sendable {
+/// Transparent hint labels and the shortcut sheet. The panel does not activate
+/// the app and does not become key, so the frontmost window keeps focus.
+/// Mouse events pass through. Hint coordinates stay in the space the markers
+/// already use. This file does not convert them. Help text is centered on the
+/// main screen when one exists. Placement on a real display is not measured here.
+public final class NonActivatingHintPanel: OverlayPresenting, HelpPresenting, @unchecked Sendable {
     public init() {}
 
     public func present(_ presentation: OverlayPresentation) {
@@ -14,6 +15,17 @@ public final class NonActivatingHintPanel: OverlayPresenting, @unchecked Sendabl
         PanelDispatch.perform { holder in
             holder.show(markers)
         }
+    }
+
+    public func presentHelp(_ presentation: HelpPresentation) {
+        let text = presentation.page.text
+        PanelDispatch.perform { holder in
+            holder.showHelp(text)
+        }
+    }
+
+    public func hideHelp() {
+        hideOverlay()
     }
 
     public func hideOverlay() {
@@ -103,6 +115,36 @@ private final class PanelHolder {
         content.frame = NSRect(origin: .zero, size: bounds.size)
         panel.contentView = content
         panel.setFrame(bounds, display: true)
+        panel.orderFrontRegardless()
+    }
+
+    func showHelp(_ text: String) {
+        guard !text.isEmpty else {
+            panel.orderOut(nil)
+            return
+        }
+        let field = NSTextField(wrappingLabelWithString: text)
+        field.isEditable = false
+        field.isSelectable = false
+        field.isBezeled = false
+        field.drawsBackground = true
+        field.backgroundColor = NSColor(srgbRed: 1, green: 0.97, blue: 0.86, alpha: 0.96)
+        field.textColor = .black
+        field.font = NSFont.systemFont(ofSize: 13)
+        let width: CGFloat = 560
+        field.preferredMaxLayoutWidth = width - 24
+        let fitted = field.fittingSize
+        let height = max(fitted.height + 20, 40)
+        field.frame = NSRect(x: 12, y: 10, width: width - 24, height: height - 20)
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        content.addSubview(field)
+        panel.contentView = content
+        var frame = NSRect(x: 80, y: 80, width: width, height: height)
+        if let screen = NSScreen.main?.visibleFrame {
+            frame.origin.x = screen.midX - width / 2
+            frame.origin.y = screen.midY - height / 2
+        }
+        panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
     }
 

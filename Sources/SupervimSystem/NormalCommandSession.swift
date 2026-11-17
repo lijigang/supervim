@@ -11,9 +11,13 @@ public protocol InputFocusing: AnyObject, Sendable {
     func focusInput(path: [Int]) -> Bool
 }
 
-/// Task 12 claims `?`. Returning false, or a nil handler, gives that key back.
+/// Task 12 claims `?`. Returning false from `claimHelp`, or a nil handler, gives that key back.
+/// `dismissHelp` closes an open sheet on Esc and returns false when the sheet is closed,
+/// so Esc keeps its normal meaning. `yieldHelp` hides the sheet when a hint uses the same panel.
 public protocol HelpCommandHandling: AnyObject, Sendable {
     func claimHelp() -> Bool
+    func dismissHelp(for event: KeyEvent) -> Bool
+    func yieldHelp()
 }
 
 /// One key after the actuator and the focus request have run.
@@ -107,10 +111,16 @@ public final class NormalCommandSession: @unchecked Sendable {
     }
 
     public func handleKeyDown(_ event: KeyEvent) -> CommandPerformance {
-        finish(pipeline.wiring.handleKeyDown(event), hintKeyCode: nil)
+        if let dismissed = dismissedHelp(event) {
+            return dismissed
+        }
+        return finish(pipeline.wiring.handleKeyDown(event), hintKeyCode: nil)
     }
 
     public func handleSystemRecord(_ record: SystemKeyRecord) -> CommandPerformance {
+        if let event = SystemKeyTranslation.keyEvent(from: record), let dismissed = dismissedHelp(event) {
+            return dismissed
+        }
         let outcome = pipeline.wiring.handleSystemRecord(record)
         guard let decision = outcome.decision else {
             return CommandPerformance(
@@ -199,6 +209,7 @@ public final class NormalCommandSession: @unchecked Sendable {
             guard let hints else {
                 return false
             }
+            help?.yieldHelp()
             _ = hints.enterHint(click)
             return true
         case .hintKey(let event):
@@ -227,6 +238,24 @@ public final class NormalCommandSession: @unchecked Sendable {
         case .showHelp, nil:
             return false
         }
+    }
+
+    /// Esc closes help only in Normal. Hint and Insert keep Esc for themselves.
+    private func dismissedHelp(_ event: KeyEvent) -> CommandPerformance? {
+        guard decider.mode == .normal else {
+            return nil
+        }
+        guard help?.dismissHelp(for: event) == true else {
+            return nil
+        }
+        return CommandPerformance(
+            delivery: .swallow,
+            mode: decider.mode,
+            decision: EventDecision(delivery: .swallow, mode: decider.mode),
+            outcomes: [],
+            focusedPath: nil,
+            swallowReason: .overlay
+        )
     }
 
     private func isScroll(_ action: Action) -> Bool {

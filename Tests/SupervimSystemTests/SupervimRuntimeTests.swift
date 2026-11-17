@@ -453,6 +453,13 @@ private final class HelpClaim: HelpCommandHandling, @unchecked Sendable {
         claims += 1
         return true
     }
+
+    func dismissHelp(for event: KeyEvent) -> Bool {
+        _ = event
+        return false
+    }
+
+    func yieldHelp() {}
 }
 
 private func repoRoot(file: String = #filePath) -> URL {
