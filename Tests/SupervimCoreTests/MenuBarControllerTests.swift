@@ -298,11 +298,13 @@ final class MenuBarControllerTests: XCTestCase {
         }
         XCTAssertTrue(combined.contains("MenuBarController"))
         XCTAssertTrue(combined.contains("canImport(AppKit)"))
+        XCTAssertFalse(files.contains("main.swift"))
         let entry = try String(
-            contentsOf: directory.appendingPathComponent("main.swift"),
+            contentsOf: directory.appendingPathComponent("SupervimApp.swift"),
             encoding: .utf8
         )
         XCTAssertTrue(entry.hasPrefix("#if os(macOS)\n"))
+        XCTAssertTrue(entry.contains("@main"))
         XCTAssertFalse(entry.contains("canImport(AppKit)"))
         XCTAssertTrue(combined.contains("statusTitle"))
         XCTAssertTrue(combined.contains("addButtonTitle"))

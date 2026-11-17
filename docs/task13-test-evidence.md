@@ -179,7 +179,7 @@ Sources/Supervim/main.swift:153:1: error: 'main' attribute cannot be used in a m
 
 Linux 上同一份文件能编译。可执行目标遇到文件开头的 `#if canImport(AppKit)` 时，不会把它折成「这里只有声明」，于是拒绝 `@main`。`#if os(macOS)` 可以被折掉，任务 1 的入口就是这样通过的。
 
-改法：`main.swift` 的入口改回 `#if os(macOS)`。状态栏、设置窗口和 `NSWorkspace` 仍留在 `#if canImport(AppKit)` 里。Linux 两条都进不了，所以仍然不编译 AppKit。源码测试锁住入口文件以 `#if os(macOS)` 开头，并且入口文件自己不再写 `canImport(AppKit)`。
+第一次改法把入口改回 `#if os(macOS)`，`@main` 仍留在 `main.swift`。这还不够：这个文件名本身就是顶层入口，不能再放 `@main`。SwiftPM 又以 `-parse-as-library` 编译可执行目标，所以也不能在 `main.swift` 里写顶层语句。入口改名为 `SupervimApp.swift`，`@main` 留在那里，并用可折叠的 `#if os(macOS)`。状态栏、设置窗口和 `NSWorkspace` 仍在 `ExclusionSettingsPanel.swift` 的 `#if canImport(AppKit)` 里。`main.swift` 已删除。源码测试确认应用目录里没有 `main.swift`，`SupervimApp.swift` 以 `#if os(macOS)` 开头并包含 `@main`。
 
 ## 没有测的东西
 

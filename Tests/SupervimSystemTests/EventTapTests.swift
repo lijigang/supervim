@@ -318,8 +318,7 @@ final class EventTapTests: XCTestCase {
     }
 
     func testMenuBarPlaceholderDoesNotInstallTheTap() throws {
-        let url = repoRoot().appendingPathComponent("Sources/Supervim/main.swift")
-        let text = try String(contentsOf: url, encoding: .utf8)
+        let text = try appTargetSource()
         for token in ["CGEvent", "EventTap", "AXUIElement", "scanFocus("] {
             XCTAssertFalse(text.contains(token), token)
         }
@@ -404,6 +403,18 @@ private final class RecordingInstaller: EventTapInstalling, @unchecked Sendable 
     func uninstall() {
         removals += 1
     }
+}
+
+private func appTargetSource() throws -> String {
+    let directory = repoRoot().appendingPathComponent("Sources/Supervim")
+    let files = try FileManager.default.subpathsOfDirectory(atPath: directory.path)
+        .filter { $0.hasSuffix(".swift") }
+    XCTAssertFalse(files.isEmpty)
+    var text = ""
+    for relative in files {
+        text += try String(contentsOf: directory.appendingPathComponent(relative), encoding: .utf8)
+    }
+    return text
 }
 
 private func repoRoot(file: String = #filePath) -> URL {
