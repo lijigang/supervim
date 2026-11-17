@@ -7,6 +7,7 @@ public protocol KeyDeciding: AnyObject, Sendable {
     func endHint(_ reason: HintEnd) -> EventDecision
     func acceptPointerClick(x: Double, y: Double) -> EventDecision
     func releaseHeldInput()
+    func enterInsertAfterFocus() -> SupervimMode
     var mode: SupervimMode { get }
 }
 

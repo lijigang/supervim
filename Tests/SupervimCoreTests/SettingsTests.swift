@@ -22,6 +22,7 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(Settings.minimumKeySequenceTimeoutMilliseconds, 1)
         XCTAssertEqual(Settings.maximumKeySequenceTimeoutMilliseconds, 60_000)
         XCTAssertEqual(settings.pauseShortcut, .default)
+        XCTAssertEqual(settings.visionBundleIdentifiers, ["com.tencent.xinWeChat"])
     }
 
     func testDefaultTimeoutMatchesTheKeyParser() {
@@ -649,6 +650,7 @@ final class SettingsTests: XCTestCase {
         "launchAtLogin",
         "keySequenceTimeoutMilliseconds",
         "pauseShortcut",
+        "visionBundleIdentifiers",
     ]
 
     private static let forbiddenRuntimeTokens = [

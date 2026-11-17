@@ -312,19 +312,23 @@ public struct CommandSnapshot: Equatable, Sendable {
     public var firstInput: EditableInputQuery
     public var focusPoint: ActuatorPoint?
     public var structuralAreas: [ScrollArea]
+    /// Accessibility frame of the front window. Nil when the tree had none.
+    public var windowFrame: ActuatorRect?
 
     public init(
         scrollAreas: [ScrollArea],
         scrollCatalogReady: Bool,
         firstInput: EditableInputQuery,
         focusPoint: ActuatorPoint?,
-        structuralAreas: [ScrollArea] = []
+        structuralAreas: [ScrollArea] = [],
+        windowFrame: ActuatorRect? = nil
     ) {
         self.scrollAreas = scrollAreas
         self.scrollCatalogReady = scrollCatalogReady
         self.firstInput = firstInput
         self.focusPoint = focusPoint
         self.structuralAreas = structuralAreas
+        self.windowFrame = windowFrame
     }
 
     public static let unavailable = CommandSnapshot(
@@ -366,8 +370,16 @@ public enum CommandSnapshotBuilder {
                 scrollCatalogReady: catalog.ready,
                 firstInput: firstInput,
                 focusPoint: focus,
-                structuralAreas: catalog.ready ? catalog.structural : []
+                structuralAreas: catalog.ready ? catalog.structural : [],
+                windowFrame: usableWindow(element.frame)
             )
         }
+    }
+
+    private static func usableWindow(_ frame: ElementFrame?) -> ActuatorRect? {
+        guard let frame, frame.width > 0, frame.height > 0, frame.x.isFinite, frame.y.isFinite else {
+            return nil
+        }
+        return ActuatorRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
     }
 }

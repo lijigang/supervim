@@ -50,11 +50,11 @@ xattr -dr com.apple.quarantine /Applications/Supervim.app
 
 ## 权限 / Permissions
 
-Supervim 需要两项权限：辅助功能（Accessibility）和输入监控（Input Monitoring）。缺任何一项时会显示引导，并给出系统设置里对应面板的链接。两项都允许之后，才开始扫描焦点并安装按键钩子。
+Supervim 需要两项权限：辅助功能（Accessibility）和输入监控（Input Monitoring）。缺任何一项时会显示引导，并给出系统设置里对应面板的链接。两项都允许之后，才开始扫描焦点并安装按键钩子。屏幕录制（Screen Recording）是可选项，不挡住启动。微信这类没有辅助功能树的应用，第一次按 `f` 时才会请求它。截图只在本机做文字识别，不上传。没允许时，状态栏会提示需要「屏幕录制」权限。
 
 授权之后，当前进程不保证不用退出再打开就能用上该权限。这一点没有在真机上验证。未签名的 Supervim 重新构建或更换二进制之后，代码目录哈希可能变化，系统可能要求再授权一次。
 
-Supervim needs Accessibility and Input Monitoring. If either is missing, a guide offers a link to that pane in System Settings. The focus scanner and the key hook start only after both are allowed.
+Supervim needs Accessibility and Input Monitoring. If either is missing, a guide offers a link to that pane in System Settings. The focus scanner and the key hook start only after both are allowed. Screen Recording is optional and does not block startup. The first `f` in an app with no accessibility tree, such as WeChat, asks for it. The capture stays on this Mac and is not uploaded. Without it, the status item says that Screen Recording is required.
 
 Granting a permission does not guarantee this process can use it without quitting and reopening. That has not been verified on a Mac. Rebuilding the unsigned binary can change its code-directory hash, and macOS may ask for permission again.
 

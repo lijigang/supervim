@@ -98,11 +98,19 @@ public struct ActuationContext: Equatable, Sendable {
     public var bundleIdentifier: String
     public var pointer: ActuatorPoint?
     public var scrollAreas: [ScrollArea]
+    /// Front window in accessibility points. Used only when no scroll area exists.
+    public var windowFrame: ActuatorRect?
 
-    public init(bundleIdentifier: String, pointer: ActuatorPoint? = nil, scrollAreas: [ScrollArea] = []) {
+    public init(
+        bundleIdentifier: String,
+        pointer: ActuatorPoint? = nil,
+        scrollAreas: [ScrollArea] = [],
+        windowFrame: ActuatorRect? = nil
+    ) {
         self.bundleIdentifier = bundleIdentifier
         self.pointer = pointer
         self.scrollAreas = scrollAreas
+        self.windowFrame = windowFrame
     }
 }
 
@@ -903,15 +911,30 @@ public final class ActionActuator: @unchecked Sendable {
         case .beginHint, .showHelp, .focusFirstInput, .passNextKey, .escape, .enterInsert:
             return .notActuatorWork
         case .scroll(let direction, let amount):
-            guard let effect = ScrollHitRule.effect(
+            if let effect = ScrollHitRule.effect(
                 areas: context.scrollAreas,
                 pointer: context.pointer,
                 direction: direction,
                 amount: amount
-            ) else {
-                return .pass
+            ) {
+                ModeTrace.noteLine(ScrollFallback.targetLine(effect: effect, direction: direction))
+                return .effects([effect])
             }
-            return .effects([effect])
+            if context.scrollAreas.isEmpty {
+                if let window = context.windowFrame,
+                   let aim = ScrollFallback.aim(pointer: context.pointer, window: window),
+                   let effect = ScrollFallback.wheel(
+                       direction: direction,
+                       amount: amount,
+                       aim: aim,
+                       window: window
+                   ) {
+                    ModeTrace.noteLine(aim.logLine(direction: direction))
+                    return .effects([effect])
+                }
+                ModeTrace.noteLine(ScrollFallback.missLine(direction: direction))
+            }
+            return .pass
         case .sendShortcut(let combo):
             if restrictsToPromisedBrowsers(action), !PromisedApplications.isPromisedBrowser(context.bundleIdentifier) {
                 return .pass

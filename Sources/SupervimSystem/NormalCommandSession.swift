@@ -85,6 +85,9 @@ public final class NormalCommandSession: @unchecked Sendable {
     private let focuser: any InputFocusing
     private let hints: (any HintOverlayControlling)?
     private let help: (any HelpCommandHandling)?
+    private let banner: HintMissBanner?
+    private let windows: (any FrontWindowReading)?
+    private let visionBundles: @Sendable () -> [String]
 
     public init(
         pipeline: FocusPipeline,
@@ -94,7 +97,10 @@ public final class NormalCommandSession: @unchecked Sendable {
         pointer: any PointerReading,
         focuser: any InputFocusing,
         hints: (any HintOverlayControlling)? = nil,
-        help: (any HelpCommandHandling)? = nil
+        help: (any HelpCommandHandling)? = nil,
+        banner: HintMissBanner? = nil,
+        windows: (any FrontWindowReading)? = nil,
+        visionBundles: @escaping @Sendable () -> [String] = { Settings.defaultVisionBundleIdentifiers }
     ) {
         self.pipeline = pipeline
         self.decider = decider
@@ -104,6 +110,9 @@ public final class NormalCommandSession: @unchecked Sendable {
         self.focuser = focuser
         self.hints = hints
         self.help = help
+        self.banner = banner
+        self.windows = windows
+        self.visionBundles = visionBundles
     }
 
     public func replaceSnapshot(_ snapshot: CommandSnapshot) {
@@ -155,7 +164,8 @@ public final class NormalCommandSession: @unchecked Sendable {
             let context = ActuationContext(
                 bundleIdentifier: pipeline.cache.currentFocus().bundleIdentifier,
                 pointer: point,
-                scrollAreas: areas
+                scrollAreas: areas,
+                windowFrame: snapshot.windowFrame ?? windows?.frontWindowFrame()
             )
             for action in prepared.actuatorActions {
                 let outcome = actuator.perform(action, context: context)
@@ -186,12 +196,10 @@ public final class NormalCommandSession: @unchecked Sendable {
         }
         var mode = decision.mode
         var focusedPath: [Int]?
-        if wantsFocus, let snapshot, delivery == .swallow, case .found(let target) = snapshot.firstInput {
-            if focuser.focusInput(path: target.path) {
-                decider.releaseHeldInput()
-                focusedPath = target.path
-                mode = pipeline.scanner.noteFocusChanged().mode
-            }
+        if wantsFocus, let snapshot, delivery == .swallow {
+            let focused = focusFirstInput(snapshot)
+            focusedPath = focused.path
+            mode = focused.mode
         }
         if overlayClaimed, isHint(decision.overlay) {
             mode = decider.mode
@@ -323,6 +331,74 @@ public final class NormalCommandSession: @unchecked Sendable {
             }
         }
         return nil
+    }
+
+    /// `gi`. Accessibility focus is tried first. A failed focus clicks the
+    /// field. Insert is entered explicitly. An app with no text field and no
+    /// plausible composer shows a banner instead of clicking a random point.
+    private func focusFirstInput(_ snapshot: CommandSnapshot) -> (path: [Int]?, mode: SupervimMode) {
+        let bundle = pipeline.cache.currentFocus().bundleIdentifier
+        switch snapshot.firstInput {
+        case .found(let target):
+            let center = ActuatorPoint(
+                x: target.frame.x + target.frame.width / 2,
+                y: target.frame.y + target.frame.height / 2
+            )
+            let usable = target.frame.width > 0 && target.frame.height > 0
+                && center.x.isFinite && center.y.isFinite
+            let pathText = target.path.map(String.init).joined(separator: "/")
+            if usable, focuser.focusInput(path: target.path) {
+                ModeTrace.noteLine(InputChoice.logLine(
+                    decision: "ax-focused",
+                    fields: ["path=\(pathText)", "role=\(target.role ?? "-")", "x=\(center.x)", "y=\(center.y)"]
+                ))
+                return commitInsert(path: target.path)
+            }
+            if usable {
+                _ = actuator.click(ClickRequest(point: center, kind: .plain))
+                ModeTrace.noteLine(InputChoice.logLine(
+                    decision: "click",
+                    fields: ["reason=ax-focus-failed", "path=\(pathText)", "x=\(center.x)", "y=\(center.y)"]
+                ))
+                return commitInsert(path: target.path)
+            }
+            banner?.report(HintMissBanner.inputMissingMessage)
+            ModeTrace.noteLine(InputChoice.logLine(decision: "none", fields: ["reason=no-frame"]))
+            return (nil, decider.mode)
+        case .none, .unavailable:
+            let window = snapshot.windowFrame ?? windows?.frontWindowFrame()
+            if visionBundles().contains(bundle),
+               let window,
+               let point = InputChoice.bottomCenter(of: HintRect(
+                   x: window.x,
+                   y: window.y,
+                   width: window.width,
+                   height: window.height
+               )) {
+                _ = actuator.click(ClickRequest(
+                    point: ActuatorPoint(x: point.x, y: point.y),
+                    kind: .plain
+                ))
+                ModeTrace.noteLine(InputChoice.logLine(
+                    decision: "bottom-center",
+                    fields: ["bundle=\(bundle)", "x=\(point.x)", "y=\(point.y)"]
+                ))
+                return commitInsert(path: nil)
+            }
+            banner?.report(HintMissBanner.inputMissingMessage)
+            let reason = window == nil ? "no-window" : "no-input"
+            ModeTrace.noteLine(InputChoice.logLine(
+                decision: "none",
+                fields: ["reason=\(reason)", "bundle=\(bundle.isEmpty ? "-" : bundle)"]
+            ))
+            return (nil, decider.mode)
+        }
+    }
+
+    private func commitInsert(path: [Int]?) -> (path: [Int]?, mode: SupervimMode) {
+        decider.releaseHeldInput()
+        _ = pipeline.scanner.noteFocusChanged()
+        return (path, decider.enterInsertAfterFocus())
     }
 
     private func isScroll(_ action: Action) -> Bool {

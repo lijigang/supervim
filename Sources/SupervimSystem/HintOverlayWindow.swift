@@ -32,7 +32,7 @@ public final class NonActivatingHintPanel: OverlayPresenting, HelpPresenting, @u
 
     public func hideOverlay() {
         PanelDispatch.perform { holder in
-            holder.panel.orderOut(nil)
+            holder.hideAll()
         }
     }
 }
@@ -73,9 +73,21 @@ private final class PanelRegistry {
 @MainActor
 private final class PanelHolder {
     let panel: NSPanel
+    private var hintPanels: [NSPanel] = []
 
     init() {
-        panel = NSPanel(
+        panel = Self.makePanel()
+    }
+
+    func hideAll() {
+        panel.orderOut(nil)
+        for hintPanel in hintPanels {
+            hintPanel.orderOut(nil)
+        }
+    }
+
+    private static func makePanel() -> NSPanel {
+        let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -91,6 +103,7 @@ private final class PanelHolder {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
+        return panel
     }
 
     func show(_ markers: [HintMarker], typedPrefix: String = "") {
@@ -106,9 +119,11 @@ private final class PanelHolder {
         for (index, screen) in screens.enumerated() {
             ModeTrace.noteLine(ModeTrace.formatHintPlace(screen: screen, index: index))
         }
-        let content = NSView(frame: .zero)
-        var globals: [HintRect] = []
-        var badges: [HintBadgeView] = []
+        struct Drawn {
+            var field: HintBadgeView
+            var label: HintRect
+        }
+        var drawn: [Drawn] = []
         for marker in markers {
             let element = HintRect(
                 x: marker.anchor.x,
@@ -129,45 +144,56 @@ private final class PanelHolder {
                 continue
             }
             ModeTrace.noteLine(ModeTrace.formatHintLabel(index: marker.index, ax: element, ns: placed))
-            badge.frame = NSRect(
-                x: CGFloat(placed.x),
-                y: CGFloat(placed.y),
-                width: CGFloat(placed.width),
-                height: CGFloat(placed.height)
-            )
-            content.addSubview(badge)
-            badges.append(badge)
-            globals.append(placed)
+            drawn.append(Drawn(field: badge, label: placed))
         }
-        guard let arranged = HintGeometry.arrange(badges: globals), !badges.isEmpty else {
-            panel.orderOut(nil)
+        let nudged = HintGeometry.nudge(drawn.map(\.label))
+        for index in drawn.indices where nudged.indices.contains(index) {
+            drawn[index].label = nudged[index]
+        }
+        let groups = HintGeometry.panels(labels: drawn.map(\.label), screens: screens)
+        hideAll()
+        guard !groups.isEmpty else {
             return
         }
-        for (badge, local) in zip(badges, arranged.local) {
-            badge.frame = NSRect(
-                x: CGFloat(local.x),
-                y: CGFloat(local.y),
-                width: CGFloat(local.width),
-                height: CGFloat(local.height)
+        while hintPanels.count < groups.count {
+            hintPanels.append(Self.makePanel())
+        }
+        for (group, hintPanel) in zip(groups, hintPanels) {
+            let content = NSView(frame: .zero)
+            for item in group.items where drawn.indices.contains(item.sourceIndex) {
+                let field = drawn[item.sourceIndex].field
+                let local = item.local
+                field.frame = NSRect(
+                    x: CGFloat(local.x),
+                    y: CGFloat(local.y),
+                    width: CGFloat(local.width),
+                    height: CGFloat(local.height)
+                )
+                content.addSubview(field)
+            }
+            let frame = group.frame
+            content.frame = NSRect(x: 0, y: 0, width: CGFloat(frame.width), height: CGFloat(frame.height))
+            if #available(macOS 14.0, *) {
+                content.clipsToBounds = false
+            }
+            hintPanel.hasShadow = false
+            hintPanel.contentView = content
+            hintPanel.setFrame(
+                NSRect(
+                    x: CGFloat(frame.x),
+                    y: CGFloat(frame.y),
+                    width: CGFloat(frame.width),
+                    height: CGFloat(frame.height)
+                ),
+                display: true
             )
+            ModeTrace.noteLine(ModeTrace.formatHintPanel(
+                screen: group.screenIndex,
+                scale: group.backingScale,
+                frame: frame
+            ))
+            reveal(hintPanel)
         }
-        let frame = arranged.frame
-        content.frame = NSRect(x: 0, y: 0, width: CGFloat(frame.width), height: CGFloat(frame.height))
-        if #available(macOS 14.0, *) {
-            content.clipsToBounds = false
-        }
-        panel.hasShadow = false
-        panel.contentView = content
-        panel.setFrame(
-            NSRect(
-                x: CGFloat(frame.x),
-                y: CGFloat(frame.y),
-                width: CGFloat(frame.width),
-                height: CGFloat(frame.height)
-            ),
-            display: true
-        )
-        reveal()
     }
 
     func showHelp(_ page: HelpPage) {
@@ -187,27 +213,27 @@ private final class PanelHolder {
             frame.origin.y = min(max(visible.midY - size.height / 2, visible.minY + 12), maxY)
         }
         panel.setFrame(frame, display: true)
-        reveal()
+        reveal(panel)
     }
 
-    /// Fades the panel in once. Later hint keystrokes replace the labels
+    /// Fades one panel in once. Later hint keystrokes replace the labels
     /// without playing the fade again. Reduce Motion shows the sheet at once.
-    private func reveal() {
+    private func reveal(_ target: NSPanel) {
         let duration = ChromeMotion.appearDuration(
             reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         )
-        let alreadyVisible = panel.isVisible && panel.alphaValue > 0.95
+        let alreadyVisible = target.isVisible && target.alphaValue > 0.95
         if duration == 0 || alreadyVisible {
-            panel.alphaValue = 1
-            panel.orderFrontRegardless()
+            target.alphaValue = 1
+            target.orderFrontRegardless()
             return
         }
-        panel.alphaValue = 0
-        panel.orderFrontRegardless()
+        target.alphaValue = 0
+        target.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().alphaValue = 1
+            target.animator().alphaValue = 1
         }
     }
 }
