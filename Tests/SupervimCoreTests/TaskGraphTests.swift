@@ -76,7 +76,8 @@ private let approvedStatus: [Int: String] = {
         status[id] = "pending"
     }
     status[1] = "done"
-    status[2] = "in-progress"
+    status[2] = "done"
+    status[3] = "in-progress"
     return status
 }()
 
