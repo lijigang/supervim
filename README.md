@@ -4,9 +4,9 @@ Supervim 是一个原生 macOS 菜单栏应用，目标是提供 Vimium 风格�
 
 Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard control. It uses Swift and AppKit, not Electron. The running app does not use the network and does not record keystrokes.
 
-**任务 6 交付本地设置。** 排除列表、暂停状态、暂停快捷键、按键序列超时和登录启动偏好可以保存。默认排除 Terminal、iTerm 和 Emacs。登录启动只保存这个选择，还不会注册登录项。设置还没有接到菜单或事件钩子上。
+**任务 7 把按键接到模式、解析和命令。** 事件回调只读当前模式和已经缓存的焦点，再交给 KeyParser 和 CommandMap，决定放过、吞掉、一个动作或一次浮层更新。未知焦点、未知的普通模式按键，以及排除列表里的前台应用都会把事件交还系统。默认暂停键 Ctrl+Option+V 在解析器之外切换暂停。点击、滚动和浮层绘制还没有做，菜单栏占位程序也不会安装事件钩子。
 
-**Task 6 adds local settings.** The exclusion list, paused state, pause shortcut, key-sequence timeout, and launch-at-login preference can be saved. Terminal, iTerm, and Emacs are excluded by default. Launch at login is only the saved flag; nothing registers a login item yet. Settings are not wired to the menu or the event tap.
+**Task 7 wires keys to the mode, the parser, and the command map.** The event callback reads only the current mode and a cached focus, then asks KeyParser and CommandMap for a pass-through, a swallow, an action, or an overlay update. Unknown focus, an undefined Normal-mode key, and an excluded frontmost app all give the event back to the system. The default pause chord, Ctrl+Option+V, toggles pause outside the parser. Clicks, scrolling, and overlay drawing are not implemented, and the menu-bar placeholder does not install the tap.
 
 ## 文档 / Docs
 
@@ -20,6 +20,7 @@ Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard c
 - [任务 4 测试记录 / Task 4 test evidence](docs/task4-test-evidence.md)
 - [任务 5 测试记录 / Task 5 test evidence](docs/task5-test-evidence.md)
 - [任务 6 测试记录 / Task 6 test evidence](docs/task6-test-evidence.md)
+- [任务 7 测试记录 / Task 7 test evidence](docs/task7-test-evidence.md)
 
 规格文末单独列出了尚未能保证的平台行为。那些条目没有改写已批准的要求。
 
@@ -55,8 +56,8 @@ scripts/assemble-app.sh release
 
 ```text
 Package.swift                 SwiftPM 描述，macOS 13+，Swift 6
-Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings
-Sources/SupervimSystem        系统适配。含菜单栏预检，以及 UserDefaults 设置存储
+Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings、EventInterpreter
+Sources/SupervimSystem        系统适配。含菜单栏预检、UserDefaults 设置存储，以及 EventTap 协议和 CGEventTap 适配
 Sources/Supervim              菜单栏占位程序
 App/Supervim/Info.plist       应用包清单，含 LSUIElement
 scripts/assemble-app.sh       组装未签名 .app
@@ -70,8 +71,8 @@ docs                          已批准的中文宪法、规格、计划和任�
 
 ## CI
 
-推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、五个覆盖率脚本和 `scripts/assemble-app.sh`，并检查组装结果里的 `LSUIElement`。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`，以及 `Settings.swift` 和 `UserDefaultsSettingsStore.swift` 的行覆盖率不低于 90%。
+推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、六个覆盖率脚本和 `scripts/assemble-app.sh`，并检查组装结果里的 `LSUIElement`。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift` 和 `EventTap.swift` 的行覆盖率不低于 90%。
 
 ## 工作流工具 / Workflow tools
 
-本仓库没有 spec-kit，也没有 task-master CLI。任务文件是按上游 schema 手写的，说明见 [任务文档](docs/tasks.md#task-master-格式)。测试记录写在 `docs/task1-test-evidence.md` 到 `docs/task6-test-evidence.md`。
+本仓库没有 spec-kit，也没有 task-master CLI。任务文件是按上游 schema 手写的，说明见 [任务文档](docs/tasks.md#task-master-格式)。测试记录写在 `docs/task1-test-evidence.md` 到 `docs/task7-test-evidence.md`。
