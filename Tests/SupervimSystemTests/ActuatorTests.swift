@@ -241,28 +241,100 @@ final class ActuatorTests: XCTestCase {
     }
 
     func testEdgeScrollSetsTheBarEvenWhenThePointerIsOverTheArea() {
-        let poster = RecordingActuator()
         let context = pageContext(bundle: "com.apple.Safari")
-        let top = outcomeOf(
+        let topBars = ScriptedEdgeBars(queued: [edgeBar(0.4, settable: true)], stick: true)
+        let topPoster = RecordingActuator()
+        let top = ActionActuator(poster: topPoster, edgeBars: topBars).perform(
             .scroll(direction: .up, amount: .edge),
-            context: context,
-            poster: poster
-        )
-        let bottom = outcomeOf(
-            .scroll(direction: .down, amount: .edge),
-            context: context,
-            poster: poster
+            context: context
         )
         XCTAssertEqual(top, .performed([
-            .focusScroll(targetID: "page", direction: .up, amount: .edge, pixels: 0, scrollRange: nil),
+            .scrollBarEdge(targetID: "page", direction: .up, value: 0),
         ]))
+        XCTAssertEqual(topBars.writes, [0])
+        let bottomBars = ScriptedEdgeBars(queued: [edgeBar(0.4, settable: true)], stick: true)
+        let bottomPoster = RecordingActuator()
+        let bottom = ActionActuator(poster: bottomPoster, edgeBars: bottomBars).perform(
+            .scroll(direction: .down, amount: .edge),
+            context: context
+        )
         XCTAssertEqual(bottom, .performed([
-            .focusScroll(targetID: "page", direction: .down, amount: .edge, pixels: 0, scrollRange: nil),
+            .scrollBarEdge(targetID: "page", direction: .down, value: 1),
         ]))
-        XCTAssertEqual(poster.effects.count, 2)
-        for effect in poster.effects {
-            guard case .focusScroll = effect else {
-                return XCTFail("edge scroll must not be a wheel event: \(effect)")
+        XCTAssertEqual(bottomBars.writes, [1])
+        for effect in topPoster.effects + bottomPoster.effects {
+            if case .pointerScroll = effect {
+                XCTFail("a settable bar that stays at the edge is not a wheel: \(effect)")
+            }
+            if case .shortcut = effect {
+                XCTFail("edge scroll must not type a key: \(effect)")
+            }
+        }
+    }
+
+    /// `j` still wheels 60 points at the pointer. `G` on an `AXWebArea` must
+    /// use that same area and wheel a long way at its center. Setting the
+    /// scrollbar is not a scroll in Safari, Chrome, Arc, or Electron.
+    func testWebAreaEdgeScrollWheelsTheSameTargetAtItsCenter() {
+        let pointer = actuatorPoint(20, 30)
+        var page = scrollRegion(
+            "page",
+            frame: ActuatorRect(x: 0, y: 0, width: 200, height: 200),
+            containsPointer: true,
+            isFocusContainer: true,
+            travelDown: 1000,
+            travelUp: 1000
+        )
+        page.role = "AXWebArea"
+        let context = actuation("com.apple.Safari", pointer: pointer, areas: [page])
+        let stepped = RecordingActuator()
+        XCTAssertEqual(
+            outcomeOf(.scroll(direction: .down, amount: .points(60)), context: context, poster: stepped),
+            .performed([
+                .pointerScroll(
+                    targetID: "page",
+                    direction: .down,
+                    amount: .points(60),
+                    location: pointer,
+                    horizontal: 0,
+                    vertical: -60
+                ),
+            ])
+        )
+        let half = RecordingActuator()
+        let halfAmount = ScrollAmount.fractionOfPage(numerator: 1, denominator: 2)
+        XCTAssertEqual(
+            outcomeOf(.scroll(direction: .down, amount: halfAmount), context: context, poster: half),
+            .performed([
+                .pointerScroll(
+                    targetID: "page",
+                    direction: .down,
+                    amount: halfAmount,
+                    location: pointer,
+                    horizontal: 0,
+                    vertical: -100
+                ),
+            ])
+        )
+        let edge = RecordingActuator()
+        let outcome = outcomeOf(.scroll(direction: .down, amount: .edge), context: context, poster: edge)
+        guard case .performed(let effects) = outcome, let first = effects.first else {
+            return XCTFail("expected wheels, got \(outcome)")
+        }
+        guard case .pointerScroll(let target, let direction, _, let location, let horizontal, let vertical) = first else {
+            return XCTFail("gg/G must wheel the j/k target at its center, got \(effects)")
+        }
+        XCTAssertEqual(target, "page")
+        XCTAssertEqual(direction, .down)
+        XCTAssertEqual(location, actuatorPoint(100, 100))
+        XCTAssertEqual(horizontal, 0)
+        XCTAssertLessThan(vertical, -1000)
+        for effect in effects {
+            if case .shortcut = effect {
+                XCTFail("edge scroll must not type Home or End: \(effect)")
+            }
+            if case .focusScroll = effect {
+                XCTFail("AXValue on a web scrollbar is not the scroll: \(effect)")
             }
         }
     }
@@ -583,16 +655,22 @@ final class ActuatorTests: XCTestCase {
             .passedThrough
         )
         let edge = RecordingActuator()
-        XCTAssertEqual(
-            outcomeOf(
-                .scroll(direction: .down, amount: .edge),
-                context: actuation("com.apple.Safari", areas: [document]),
-                poster: edge
-            ),
-            .performed([
-                .focusScroll(targetID: "doc", direction: .down, amount: .edge, pixels: 0, scrollRange: nil),
-            ])
+        let edgeOutcome = outcomeOf(
+            .scroll(direction: .down, amount: .edge),
+            context: actuation("com.apple.Safari", areas: [document]),
+            poster: edge
         )
+        guard case .performed(let effects) = edgeOutcome else {
+            return XCTFail("expected wheels, got \(edgeOutcome)")
+        }
+        XCTAssertEqual(effects.count, EdgeScroll.unobservedBursts)
+        guard case .pointerScroll(let target, _, _, let location, let horizontal, let vertical) = effects.first else {
+            return XCTFail("expected a center wheel, got \(effects)")
+        }
+        XCTAssertEqual(target, "doc")
+        XCTAssertEqual(location, actuatorPoint(100, 100))
+        XCTAssertEqual(horizontal, 0)
+        XCTAssertEqual(vertical, -EdgeScroll.wheelPixels)
         XCTAssertEqual(poster.effects, [])
     }
 
@@ -791,6 +869,17 @@ final class ActuatorTests: XCTestCase {
                 let outcome = outcomeOf(binding.action, context: context, poster: poster)
                 let restricted: Set<String> = ["H", "L", "J", "K", "yy"]
                 switch binding.action {
+                case .scroll(_, .edge):
+                    guard case .performed(let effects) = outcome,
+                          effects.count == EdgeScroll.unobservedBursts
+                    else {
+                        return XCTFail("\(binding.keys) should wheel to the edge, got \(outcome)")
+                    }
+                    XCTAssertEqual(poster.effects, effects)
+                    XCTAssertTrue(effects.allSatisfy { effect in
+                        if case .pointerScroll = effect { return true }
+                        return false
+                    })
                 case .scroll:
                     guard case .performed(let effects) = outcome, effects.count == 1 else {
                         return XCTFail("\(binding.keys) should scroll, got \(outcome)")
@@ -817,7 +906,9 @@ final class ActuatorTests: XCTestCase {
     func testHitRuleIsWrittenNextToTheSelector() throws {
         let text = try String(contentsOf: actuatorSource, encoding: .utf8)
         XCTAssertTrue(text.contains("Scroll hit rule."))
-        XCTAssertTrue(text.contains("A wheel event is not used for an edge"))
+        XCTAssertTrue(text.contains("large wheel events at the area's center"))
+        XCTAssertTrue(text.contains("do not send Home, End, or Command+arrow"))
+        XCTAssertFalse(text.contains("A wheel event is not used for an edge"))
         XCTAssertTrue(text.contains("contains the pointer"))
         XCTAssertTrue(text.contains("isFocusContainer"))
         XCTAssertFalse(text.contains("case right"))
@@ -833,6 +924,10 @@ final class ActuatorTests: XCTestCase {
         XCTAssertTrue(text.contains("SynthesizedEventMark.userData"))
         XCTAssertTrue(text.contains("eventSourceUserData"))
         XCTAssertTrue(text.contains("kAXPressAction"))
+        XCTAssertTrue(text.contains("AXUIElementIsAttributeSettable"))
+        XCTAssertTrue(text.contains("scrollBarEdge"))
+        XCTAssertFalse(text.contains("kVK_Home"))
+        XCTAssertFalse(text.contains("kVK_End"))
         XCTAssertTrue(text.contains("AXUIElementPerformAction"))
         XCTAssertTrue(text.contains(".leftMouseDown"))
         XCTAssertTrue(text.contains(".leftMouseUp"))
@@ -952,6 +1047,219 @@ final class ActuatorTests: XCTestCase {
         )
     }
 
+    func testEdgeScrollNamesAndLogLine() {
+        XCTAssertEqual(EdgeScroll.names(for: .up).sequence, "gg")
+        XCTAssertEqual(EdgeScroll.names(for: .up).command, "scrollToTop")
+        XCTAssertEqual(EdgeScroll.names(for: .down).sequence, "G")
+        XCTAssertEqual(EdgeScroll.names(for: .down).command, "scrollToBottom")
+        XCTAssertEqual(EdgeScroll.names(for: .left).sequence, "edge-left")
+        XCTAssertEqual(EdgeScroll.names(for: .right).command, "scrollToRightEdge")
+        let line = EdgeScroll.logLine(
+            sequence: "gg",
+            command: "scrollToTop",
+            role: "AXWebArea",
+            target: "page",
+            strategy: "wheel",
+            result: "atEdge"
+        )
+        XCTAssertEqual(
+            line,
+            "scroll-edge sequence=gg command=scrollToTop role=AXWebArea target=page strategy=wheel result=atEdge"
+        )
+    }
+
+    func testUnsettableWebBarWheelsUntilTheEdgeOrTheBurstEnds() {
+        let reaching = ScriptedEdgeBars(queued: [
+            edgeBar(0.2, settable: false),
+            edgeBar(0.6, settable: false),
+            edgeBar(1, settable: false),
+        ])
+        var wheels: [(Int, Int)] = []
+        let reached = EdgeScroll.perform(
+            targetID: "page",
+            direction: .down,
+            role: "AXWebArea",
+            sequence: "G",
+            command: "scrollToBottom",
+            bars: reaching
+        ) { horizontal, vertical in
+            wheels.append((horizontal, vertical))
+        }
+        XCTAssertEqual(wheels.count, 2)
+        XCTAssertEqual(wheels.map(\.0), [0, 0])
+        XCTAssertEqual(wheels.map(\.1), [-EdgeScroll.wheelPixels, -EdgeScroll.wheelPixels])
+        XCTAssertEqual(reached.strategy, "wheel")
+        XCTAssertEqual(reached.result, "atEdge")
+        XCTAssertEqual(reached.logLine, EdgeScroll.logLine(
+            sequence: "G",
+            command: "scrollToBottom",
+            role: "AXWebArea",
+            target: "page",
+            strategy: "wheel",
+            result: "atEdge"
+        ))
+        XCTAssertTrue(reaching.writes.isEmpty)
+
+        let stuck = ScriptedEdgeBars(queued: [edgeBar(0.2, settable: false)])
+        var stuckWheels = 0
+        let unobserved = EdgeScroll.perform(
+            targetID: "page",
+            direction: .up,
+            role: "",
+            sequence: "gg",
+            command: "scrollToTop",
+            bars: stuck
+        ) { _, _ in
+            stuckWheels += 1
+        }
+        XCTAssertEqual(stuckWheels, EdgeScroll.unobservedBursts)
+        XCTAssertEqual(unobserved.result, "unobserved")
+        XCTAssertEqual(unobserved.role, "-")
+        XCTAssertEqual(unobserved.strategy, "wheel")
+    }
+
+    func testSettableBarThatDoesNotStickWheelsUntilTheValueStops() {
+        let bars = ScriptedEdgeBars(
+            queued: [
+                edgeBar(0.4, settable: true),
+                edgeBar(0.7, settable: true),
+                edgeBar(0.7, settable: true),
+            ],
+            current: edgeBar(0.4, settable: true)
+        )
+        var wheels = 0
+        let report = EdgeScroll.perform(
+            targetID: "page",
+            direction: .down,
+            role: "AXScrollArea",
+            sequence: "G",
+            command: "scrollToBottom",
+            bars: bars
+        ) { _, _ in
+            wheels += 1
+        }
+        XCTAssertEqual(bars.writes, [1])
+        XCTAssertEqual(wheels, 2)
+        XCTAssertEqual(report.strategy, "wheel")
+        XCTAssertEqual(report.result, "moved")
+
+        let dropped = ScriptedEdgeBars(
+            queued: [edgeBar(0.2, settable: true), edgeBar(0.6, settable: true), nil],
+            current: edgeBar(0.2, settable: true)
+        )
+        var droppedWheels = 0
+        let moved = EdgeScroll.perform(
+            targetID: "doc",
+            direction: .up,
+            role: "AXScrollArea",
+            sequence: "gg",
+            command: "scrollToTop",
+            bars: dropped
+        ) { _, _ in
+            droppedWheels += 1
+        }
+        XCTAssertEqual(dropped.writes, [0])
+        XCTAssertEqual(droppedWheels, 2)
+        XCTAssertEqual(moved.result, "moved")
+
+        let vanished = ScriptedEdgeBars(
+            queued: [edgeBar(0.2, settable: true), nil],
+            current: edgeBar(0.2, settable: true)
+        )
+        var vanishedWheels = 0
+        let unchanged = EdgeScroll.perform(
+            targetID: "doc",
+            direction: .down,
+            role: "AXScrollArea",
+            sequence: "G",
+            command: "scrollToBottom",
+            bars: vanished
+        ) { _, _ in
+            vanishedWheels += 1
+        }
+        XCTAssertEqual(vanished.writes, [1])
+        XCTAssertEqual(vanishedWheels, 1)
+        XCTAssertEqual(unchanged.result, "unchanged")
+    }
+
+    func testMissingOrUselessBarPostsABoundedCenterWheelAndNoKeys() {
+        var missing = 0
+        var horizontal = 0
+        let report = EdgeScroll.perform(
+            targetID: "page",
+            direction: .left,
+            role: nil,
+            sequence: "edge-left",
+            command: "scrollToLeftEdge",
+            bars: nil
+        ) { x, y in
+            missing += 1
+            horizontal = x
+            XCTAssertEqual(y, 0)
+        }
+        XCTAssertEqual(missing, EdgeScroll.unobservedBursts)
+        XCTAssertEqual(horizontal, -EdgeScroll.wheelPixels)
+        XCTAssertEqual(report.result, "unobserved")
+        XCTAssertEqual(report.role, "-")
+
+        let useless = ScriptedEdgeBars(queued: [
+            EdgeBar(value: .nan, minimum: 0, maximum: 1, settable: true),
+        ])
+        var uselessWheels = 0
+        let fallback = EdgeScroll.perform(
+            targetID: "page",
+            direction: .right,
+            role: "AXWebArea",
+            sequence: "edge-right",
+            command: "scrollToRightEdge",
+            bars: useless
+        ) { x, y in
+            uselessWheels += 1
+            XCTAssertEqual(x, EdgeScroll.wheelPixels)
+            XCTAssertEqual(y, 0)
+        }
+        XCTAssertEqual(uselessWheels, EdgeScroll.unobservedBursts)
+        XCTAssertTrue(useless.writes.isEmpty)
+        XCTAssertEqual(fallback.strategy, "wheel")
+
+        let parked = ScriptedEdgeBars(queued: [edgeBar(0, settable: false)])
+        var parkedWheels = 0
+        let already = EdgeScroll.perform(
+            targetID: "page",
+            direction: .up,
+            role: "AXWebArea",
+            sequence: "gg",
+            command: "scrollToTop",
+            bars: parked
+        ) { _, _ in
+            parkedWheels += 1
+        }
+        XCTAssertEqual(parkedWheels, 0)
+        XCTAssertTrue(parked.writes.isEmpty)
+        XCTAssertEqual(already.strategy, "scrollBarValue")
+        XCTAssertEqual(already.result, "alreadyAtEdge")
+        XCTAssertEqual(already.value, 0)
+    }
+
+    func testSettableBarThatKeepsMovingStopsAtTheBurstCap() {
+        let bars = ClimbingEdgeBars()
+        var wheels = 0
+        let report = EdgeScroll.perform(
+            targetID: "page",
+            direction: .down,
+            role: "AXScrollArea",
+            sequence: "G",
+            command: "scrollToBottom",
+            bars: bars
+        ) { _, _ in
+            wheels += 1
+        }
+        XCTAssertEqual(bars.writes, [10])
+        XCTAssertEqual(wheels, EdgeScroll.maxBursts)
+        XCTAssertEqual(report.result, "moved")
+        XCTAssertEqual(report.strategy, "wheel")
+    }
+
     func testFrameContainsTheInclusiveBoundary() {
         let frame = ActuatorRect(x: 0, y: 0, width: 10, height: 10)
         XCTAssertTrue(frame.contains(actuatorPoint(0, 0)))
@@ -998,6 +1306,64 @@ private func contentArea(
     area.role = role
     area.isTextInput = textInput
     return area
+}
+
+private func edgeBar(
+    _ value: Double,
+    settable: Bool,
+    minimum: Double = 0,
+    maximum: Double = 1
+) -> EdgeBar {
+    EdgeBar(value: value, minimum: minimum, maximum: maximum, settable: settable)
+}
+
+private final class ScriptedEdgeBars: EdgeScrollBars, @unchecked Sendable {
+    var queued: [EdgeBar?]
+    var current: EdgeBar?
+    var stick: Bool
+    private(set) var writes: [Double] = []
+
+    init(queued: [EdgeBar?] = [], current: EdgeBar? = nil, stick: Bool = false) {
+        self.queued = queued
+        self.current = current
+        self.stick = stick
+    }
+
+    func bar(elementID: String, direction: ScrollDirection) -> EdgeBar? {
+        _ = (elementID, direction)
+        if !queued.isEmpty {
+            return queued.removeFirst()
+        }
+        return current
+    }
+
+    func writeBar(elementID: String, direction: ScrollDirection, value: Double) -> Double? {
+        _ = (elementID, direction)
+        writes.append(value)
+        if stick {
+            current?.value = value
+            return value
+        }
+        return current?.value
+    }
+}
+
+private final class ClimbingEdgeBars: EdgeScrollBars, @unchecked Sendable {
+    private var value = 0.2
+    private(set) var writes: [Double] = []
+
+    func bar(elementID: String, direction: ScrollDirection) -> EdgeBar? {
+        _ = (elementID, direction)
+        let bar = EdgeBar(value: value, minimum: 0, maximum: 10, settable: true)
+        value += 0.01
+        return bar
+    }
+
+    func writeBar(elementID: String, direction: ScrollDirection, value: Double) -> Double? {
+        _ = (elementID, direction)
+        writes.append(value)
+        return 0.2
+    }
 }
 
 private func actuatorPoint(_ x: Double, _ y: Double) -> ActuatorPoint {

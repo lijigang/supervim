@@ -162,6 +162,30 @@ final class EventTapTests: XCTestCase {
         XCTAssertEqual(scroll.decision?.actions, [CommandMap().action(for: .scrollDown)])
     }
 
+    func testShiftGIsScrollToBottomAndPlainGGIsScrollToTop() {
+        let shifted = SystemKeyTranslation.keyEvent(
+            from: keyRecord(keyCode: 0x05, flags: SystemModifierMask.shift, unicode: "G")
+        )
+        XCTAssertEqual(shifted, KeyEvent("G", modifiers: .shift))
+        let bottom = makeWiring(cache: safari)
+        let down = bottom.wiring.handleSystemRecord(
+            keyRecord(keyCode: 0x05, flags: SystemModifierMask.shift, unicode: "G")
+        )
+        XCTAssertEqual(down.delivery, .swallow)
+        XCTAssertEqual(down.decision?.mode, .normal)
+        XCTAssertEqual(down.decision?.actions, [CommandMap().action(for: .scrollToBottom)])
+        XCTAssertEqual(bottom.scanner.scans, 0)
+
+        let top = makeWiring(cache: safari)
+        let first = top.wiring.handleSystemRecord(keyRecord(keyCode: 0x05, unicode: "g"))
+        XCTAssertEqual(first.delivery, .swallow)
+        XCTAssertEqual(first.decision?.actions, [])
+        let second = top.wiring.handleSystemRecord(keyRecord(keyCode: 0x05, unicode: "g"))
+        XCTAssertEqual(second.delivery, .swallow)
+        XCTAssertEqual(second.decision?.actions, [CommandMap().action(for: .scrollToTop)])
+        XCTAssertEqual(top.scanner.scans, 0)
+    }
+
     func testPlainUnicodeWinsOverTheVirtualKeyCode() {
         let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x00, unicode: "j"))
         XCTAssertEqual(event, KeyEvent("j"))
