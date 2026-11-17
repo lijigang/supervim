@@ -55,12 +55,24 @@ final class EventInterpreterTests: XCTestCase {
         XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("j"), cache: terminal), scrollDown())
     }
 
-    func testSavedPauseFlagDoesNotStartTheMachinePaused() {
+    func testSavedPauseFlagStartsTheMachinePaused() {
         var settings = Settings.defaults
         settings.isPaused = true
         let interpreter = makeInterpreter(settings: settings).interpreter
-        XCTAssertEqual(interpreter.mode, .normal)
-        XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("j"), cache: safari), scrollDown())
+        XCTAssertEqual(interpreter.mode, .paused)
+        XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("j"), cache: safari), passed(mode: .paused))
+    }
+
+    func testSavedPauseOnAnEditableFieldResumesToInsert() {
+        var settings = Settings.defaults
+        settings.isPaused = true
+        let interpreter = makeInterpreter(settings: settings, cache: editableSafari).interpreter
+        XCTAssertEqual(interpreter.mode, .paused)
+        XCTAssertEqual(
+            interpreter.handleKeyDown(pauseChord(), cache: editableSafari),
+            EventDecision(delivery: .swallow, mode: .insert)
+        )
+        XCTAssertEqual(interpreter.handleKeyDown(KeyEvent("j"), cache: editableSafari), passed(mode: .insert))
     }
 
     func testDefaultPauseShortcutTogglesPauseOutsideTheParser() {

@@ -4,13 +4,9 @@ Supervim 是一个原生 macOS 菜单栏应用，目标是提供 Vimium 风格�
 
 Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard control. It uses Swift and AppKit, not Electron. The running app does not use the network and does not record keystrokes.
 
-**任务 8 读取辅助功能焦点，并判断它可编辑、不可编辑，还是未知。** 未知焦点交给模式机，按键原样放过。可编辑焦点自动进入 Insert。焦点更新来自观察者，不在按键钩子里扫描整棵树；钩子仍然只读任务 7 缓存的那一份。前台窗口的可点击元素和第一个可编辑输入框可以在钩子之外查询，测试用协议替身。授权之后是否不用重启就能生效仍未验证。菜单栏占位程序不启动扫描，也不安装事件钩子。
+**任务 13 把菜单栏换成模式显示。** 状态标题是 Normal、Insert 或 Paused。Hint 也显示成 Normal。菜单可以暂停、恢复、打开设置和退出。暂停会写入设置，下次启动仍然暂停。设置窗口可以加入当前前台应用、移除排除项，以及切换登录启动偏好。登录项只保存偏好，不向系统注册。排除列表默认仍是 Terminal、iTerm、Emacs；命中时按键原样放过，包括暂停键。任务 8 的焦点扫描器已经在库里，菜单进程不启动它，也不安装事件钩子。钩子一旦装上，已知且不可编辑的焦点会吞掉命令，而这些动作还没有从菜单进程执行。
 
-**Task 8 reads the accessibility focus and classifies it as editable, not editable, or unknown.** Unknown focus is given to the mode machine, which passes keys through. Editable focus enters Insert. Focus updates come from observers and do not scan the whole tree inside the key hook; the hook still reads only the cache from task 7. Clickable elements in the frontmost window, and the first editable input, can be queried off the hook. Tests use a protocol fake. Whether Accessibility works immediately after it is granted, without a restart, is still unverified. The menu-bar placeholder does not start the scanner or install the event tap.
-
-**任务 9 执行点击、Command 点击、滚动和应用快捷键。** `ActionActuator` 把 CommandMap 已经给出的动作交给 poster。`F` 是带 Command 的左键点击，不是右键菜单。滚动先找指针下还能移动的区域，再找焦点所在的可滚动区域，找不到就放过。`yy`、历史和标签快捷键只对一份浏览器 bundle id 名单承诺。合成事件带有来源标记，任务 7 的事件钩子不会把它们再解释一遍。菜单栏占位程序仍然不安装钩子，也不调用执行器。
-
-**Task 9 performs clicks, Command-clicks, scrolling, and application shortcuts.** `ActionActuator` hands the actions CommandMap already produced to a poster. `F` is a left click with Command held, not a right-click menu. Scrolling looks first for a scrollable area under the pointer that can still move, then for the scrollable area that contains the focus, and passes the action through when neither exists. Copy-URL, history, and tab shortcuts are promised only for one browser bundle-id list. Synthesized events carry a source mark so task 7's event tap does not interpret them again. The menu-bar placeholder still does not install the tap or call the actuator.
+**Task 13 replaces the menu-bar placeholder with the mode.** The status title is Normal, Insert, or Paused. Hint is shown as Normal. The menu can pause, resume, open settings, and quit. Pause is written to settings and restored on the next launch. The settings window can add the frontmost app, remove an exclusion, and toggle the launch-at-login preference. That preference is stored only; nothing registers a login item. The exclusion list still defaults to Terminal, iTerm, and Emacs, and a match passes every key through, including the pause chord. Task 8's focus scanner is in the library. The menu process does not start it and does not install the event tap. Once the tap is installed, a known non-editable focus would swallow commands, and this process does not perform those actions yet.
 
 ## 文档 / Docs
 
@@ -27,6 +23,7 @@ Supervim is a native macOS menu-bar app for Vimium-style, system-wide keyboard c
 - [任务 7 测试记录 / Task 7 test evidence](docs/task7-test-evidence.md)
 - [任务 8 测试记录 / Task 8 test evidence](docs/task8-test-evidence.md)
 - [任务 9 测试记录 / Task 9 test evidence](docs/task9-test-evidence.md)
+- [任务 13 测试记录 / Task 13 test evidence](docs/task13-test-evidence.md)
 
 规格文末单独列出了尚未能保证的平台行为。那些条目没有改写已批准的要求。
 
@@ -50,7 +47,7 @@ open build/Supervim.app
 
 `swift test` 会编译三个 SwiftPM 目标并运行 XCTest。`scripts/assemble-app.sh` 把调试版二进制装进 `build/Supervim.app`。这个包的 `Info.plist` 设置了 `LSUIElement=true`，所以通过 Finder 或 `open` 启动时没有 Dock 图标。包是未签名的，任务 15 才会做 DMG。
 
-直接 `swift run` 时，系统不会把裸二进制当成带 `LSUIElement` 的应用包。占位程序会改用 accessory 激活策略，避免开发时出现 Dock 图标。占位菜单只有退出，不显示 Normal / Insert / Paused。
+直接 `swift run` 时，系统不会把裸二进制当成带 `LSUIElement` 的应用包。程序会改用 accessory 激活策略，避免开发时出现 Dock 图标。状态栏显示 Normal、Insert 或 Paused，菜单里有暂停、恢复、设置和退出。启动时不安装事件钩子。
 
 发布构建：
 
@@ -62,9 +59,9 @@ scripts/assemble-app.sh release
 
 ```text
 Package.swift                 SwiftPM 描述，macOS 13+，Swift 6
-Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings、EventInterpreter
+Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含 ModeMachine、KeyParser、HintLabeler、CommandMap、Settings、EventInterpreter、MenuBarController
 Sources/SupervimSystem        系统适配。含菜单栏预检、UserDefaults、EventTap、AXScanner，以及 Actuator 和 macOS 上的 CGEvent 合成
-Sources/Supervim              菜单栏占位程序
+Sources/Supervim              菜单栏应用。模式菜单和设置窗口在 AppKit 里；逻辑在 MenuBarController。不安装事件钩子，也不启动 AXScanner
 App/Supervim/Info.plist       应用包清单，含 LSUIElement
 scripts/assemble-app.sh       组装未签名 .app
 Tests                         XCTest
@@ -77,8 +74,8 @@ docs                          已批准的中文宪法、规格、计划和任�
 
 ## CI
 
-推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、八个覆盖率脚本和 `scripts/assemble-app.sh`，并检查组装结果里的 `LSUIElement`。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift`、`EventTap.swift`、`Actuator.swift` 和 `AXScanner.swift` 的行覆盖率不低于 90%。`AXApplicationReader.swift` 和 `CGEventActuator.swift` 只在 macOS 上编译，不计入这个门槛。
+推送和 pull request 都会在 `macos-latest` 上执行 `swift build`、`swift test`、九个覆盖率脚本和 `scripts/assemble-app.sh`，并检查组装结果里的 `LSUIElement`。覆盖率脚本分别要求 `ModeMachine.swift`、`KeyParser.swift`、`HintLabeler.swift`、`CommandMap.swift`、`Settings.swift`、`UserDefaultsSettingsStore.swift`、`EventInterpreter.swift`、`EventTap.swift`、`Actuator.swift`、`AXScanner.swift` 和 `MenuBarController.swift` 的行覆盖率不低于 90%。`AXApplicationReader.swift`、`CGEventActuator.swift` 和菜单的 AppKit 胶水只在 macOS 上编译，不计入这个门槛。
 
 ## 工作流工具 / Workflow tools
 
-本仓库没有 spec-kit，也没有 task-master CLI。任务文件是按上游 schema 手写的，说明见 [任务文档](docs/tasks.md#task-master-格式)。测试记录写在 `docs/task1-test-evidence.md` 到 `docs/task9-test-evidence.md`。
+本仓库没有 spec-kit，也没有 task-master CLI。任务文件是按上游 schema 手写的，说明见 [任务文档](docs/tasks.md#task-master-格式)。测试记录写在 `docs/task1-test-evidence.md` 到 `docs/task13-test-evidence.md`。任务 10、11、12、14 的记录不在本分支。

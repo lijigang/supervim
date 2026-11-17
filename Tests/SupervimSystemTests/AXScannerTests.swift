@@ -893,12 +893,9 @@ final class AXScannerTests: XCTestCase {
         XCTAssertFalse(hook.contains("readFrontmostWindow"))
         XCTAssertFalse(hook.contains("AXUIElement"))
         XCTAssertEqual(hook.components(separatedBy: "scanFocus(").count - 1, 2)
-        let main = try String(
-            contentsOf: repoRoot().appendingPathComponent("Sources/Supervim/main.swift"),
-            encoding: .utf8
-        )
+        let app = try appTargetSource()
         for token in ["AXUIElement", "AXScanner", "AXObserver", "scanFocus(", "EventTap"] {
-            XCTAssertFalse(main.contains(token), token)
+            XCTAssertFalse(app.contains(token), token)
         }
     }
 }
@@ -1061,6 +1058,18 @@ private final class ScriptedFocusSignals: FocusChangeSignaling, @unchecked Senda
     func emit() {
         handler?()
     }
+}
+
+private func appTargetSource() throws -> String {
+    let directory = repoRoot().appendingPathComponent("Sources/Supervim")
+    let files = try FileManager.default.subpathsOfDirectory(atPath: directory.path)
+        .filter { $0.hasSuffix(".swift") }
+    XCTAssertFalse(files.isEmpty)
+    var text = ""
+    for relative in files {
+        text += try String(contentsOf: directory.appendingPathComponent(relative), encoding: .utf8)
+    }
+    return text
 }
 
 private func repoRoot(file: String = #filePath) -> URL {

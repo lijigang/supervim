@@ -848,7 +848,7 @@ final class ActuatorTests: XCTestCase {
     }
 
     func testPlaceholderDoesNotPerformActions() throws {
-        let text = try String(contentsOf: repoRoot().appendingPathComponent("Sources/Supervim/main.swift"), encoding: .utf8)
+        let text = try appTargetSource()
         for token in ["ActionActuator", "CGEventActuator", "AXUIElement"] {
             XCTAssertFalse(text.contains(token), token)
         }
@@ -974,6 +974,18 @@ private func sourceFiles(under root: URL) throws -> [URL] {
         files.append(url)
     }
     return files
+}
+
+private func appTargetSource() throws -> String {
+    let directory = repoRoot().appendingPathComponent("Sources/Supervim")
+    let files = try FileManager.default.subpathsOfDirectory(atPath: directory.path)
+        .filter { $0.hasSuffix(".swift") }
+    XCTAssertFalse(files.isEmpty)
+    var text = ""
+    for relative in files {
+        text += try String(contentsOf: directory.appendingPathComponent(relative), encoding: .utf8)
+    }
+    return text
 }
 
 private func repoRoot(file: String = #filePath) -> URL {

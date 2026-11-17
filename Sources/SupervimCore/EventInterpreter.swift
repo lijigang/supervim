@@ -57,7 +57,8 @@ public struct EventDecision: Equatable, Sendable {
 /// The hook passes in a focus snapshot that was cached earlier. This type does not
 /// scan the accessibility tree, and it does not perform the action it returns.
 /// Ctrl+Option+V (or the shortcut stored in Settings) is `togglePause` and is not
-/// fed to the parser. `Settings.isPaused` is left for task 13.
+/// fed to the parser. A saved `Settings.isPaused` starts the machine paused.
+/// Menu pause and the chord both write that flag back onto the in-memory settings.
 public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     public let clock: Clock
 
@@ -80,6 +81,39 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
             prefixTimeoutMilliseconds: Int64(settings.keySequenceTimeoutMilliseconds)
         )
         _ = apply(cache)
+        if settings.isPaused {
+            _ = machine.handle(.pause)
+        }
+    }
+
+    public func settingsSnapshot() -> Settings {
+        settings
+    }
+
+    /// Menu pause. This is not a key, so the decision passes the event through.
+    /// A pending prefix is dropped and is not replayed after resume.
+    public func pause() -> EventDecision {
+        _ = parser.suspendParsing()
+        let step = machine.handle(.pause)
+        settings.isPaused = machine.mode == .paused
+        return decided(
+            delivery: .passThrough,
+            actions: [],
+            overlay: overlay(from: step.effects),
+            effects: step.effects
+        )
+    }
+
+    /// Menu resume. A resume while the machine is not paused leaves the mode alone.
+    public func resume() -> EventDecision {
+        let step = machine.handle(.resume)
+        settings.isPaused = machine.mode == .paused
+        return decided(
+            delivery: .passThrough,
+            actions: [],
+            overlay: overlay(from: step.effects),
+            effects: step.effects
+        )
     }
 
     public func handleKeyDown(_ event: KeyEvent, cache: CachedFocus) -> EventDecision {
@@ -87,6 +121,7 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
         if shouldPause(event) {
             _ = parser.suspendParsing()
             let step = machine.handle(.togglePause)
+            settings.isPaused = machine.mode == .paused
             return decided(
                 delivery: .swallow,
                 actions: [],
