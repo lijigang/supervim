@@ -174,3 +174,27 @@ EventTap.swift function coverage: 100.00% (16/16)
 - 没有把暂停状态写回设置，也没有在菜单栏显示模式
 - 没有测量 CPU、内存或 `f` 的延迟
 - 没有按 bundle id 过滤 `yy`
+
+## macOS CI：测试辅助函数和 XCTest 重名
+
+第一次 macOS 运行：<https://github.com/lijigang/supervim/actions/runs/44031277566>，作业 <https://github.com/lijigang/supervim/actions/runs/44031277566/job/133863552170>。提交 `7297aed`。`swift build` 通过。Test 步骤失败，退出码 1。Linux 上同一份测试能编译，因为这台机器的 XCTest 没有把 `record` 加到测试实例上。
+
+Apple 的 XCTest 给 `EventTapTests` 一个实例方法 `record`。测试文件里的自由函数 `record(kind:keyCode:flags:unicode:)` 因此对不上。代表错误：
+
+```text
+Tests/SupervimSystemTests/EventTapTests.swift:59:55: error: use of 'record' refers to instance method rather than global function 'record(kind:keyCode:flags:unicode:)' in module 'SupervimSystemTests'
+Tests/SupervimSystemTests/EventTapTests.swift:60:41: error: type 'Equatable' has no member 'swallow'
+```
+
+后面的 `.swallow` 找不到、`[Any]` 不能比较，都是这一处解析失败带出来的，不是决策行为错误。
+
+改法只在测试里：那个辅助函数改名为 `keyRecord`。生产 API 没有改。
+
+改名之后在 Linux 上再跑 `swift test --filter EventTapTests`。时间：2026-11-17 06:29:39 UTC 到 06:29:43 UTC。退出码 0。没有编译警告。
+
+```text
+Test Suite 'EventTapTests' passed at 2026-11-17 06:29:43.375
+	 Executed 26 tests, with 0 failures (0 unexpected) in 0.107 (0.107) seconds
+```
+
+这只证明 Linux 仍能编译并跑过这些断言。macOS 是否不再撞上 `record`，看改名之后的 `macos-latest` 运行。

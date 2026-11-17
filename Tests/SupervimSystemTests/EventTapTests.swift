@@ -56,28 +56,28 @@ final class EventTapTests: XCTestCase {
 
     func testKeyUpFlagsAndOtherEventsDoNotReachTheParser() {
         let fixture = makeWiring(cache: safari)
-        let first = fixture.wiring.handleSystemRecord(record(kind: .keyDown, keyCode: 0x05, unicode: "g"))
+        let first = fixture.wiring.handleSystemRecord(keyRecord(kind: .keyDown, keyCode: 0x05, unicode: "g"))
         XCTAssertEqual(first.delivery, .swallow)
         XCTAssertEqual(first.decision?.actions, [])
-        let keyUp = fixture.wiring.handleSystemRecord(record(kind: .keyUp, keyCode: 0x05, unicode: "g"))
+        let keyUp = fixture.wiring.handleSystemRecord(keyRecord(kind: .keyUp, keyCode: 0x05, unicode: "g"))
         XCTAssertEqual(keyUp, SystemKeyOutcome(delivery: .passThrough, decision: nil))
         XCTAssertEqual(
-            fixture.wiring.handleSystemRecord(record(kind: .flagsChanged, keyCode: 0x05)),
+            fixture.wiring.handleSystemRecord(keyRecord(kind: .flagsChanged, keyCode: 0x05)),
             SystemKeyOutcome(delivery: .passThrough, decision: nil)
         )
         XCTAssertEqual(
-            fixture.wiring.handleSystemRecord(record(kind: .other, keyCode: 0x05, unicode: "g")),
+            fixture.wiring.handleSystemRecord(keyRecord(kind: .other, keyCode: 0x05, unicode: "g")),
             SystemKeyOutcome(delivery: .passThrough, decision: nil)
         )
         XCTAssertEqual(fixture.scanner.scans, 0)
-        let completed = fixture.wiring.handleSystemRecord(record(kind: .keyDown, keyCode: 0x05, unicode: "g"))
+        let completed = fixture.wiring.handleSystemRecord(keyRecord(kind: .keyDown, keyCode: 0x05, unicode: "g"))
         XCTAssertEqual(completed.delivery, .swallow)
         XCTAssertEqual(completed.decision?.actions, [CommandMap().action(for: .scrollToTop)])
     }
 
     func testSystemRecordForJDecidesScrollAndDoesNotScan() {
         let fixture = makeWiring(cache: safari)
-        let outcome = fixture.wiring.handleSystemRecord(record(keyCode: 0x00, unicode: "j"))
+        let outcome = fixture.wiring.handleSystemRecord(keyRecord(keyCode: 0x00, unicode: "j"))
         XCTAssertEqual(fixture.scanner.scans, 0)
         XCTAssertEqual(outcome.delivery, .swallow)
         XCTAssertEqual(outcome.decision?.actions, [CommandMap().action(for: .scrollDown)])
@@ -88,16 +88,16 @@ final class EventTapTests: XCTestCase {
         let fixture = makeWiring(cache: safari)
         let flags = SystemModifierMask.control | SystemModifierMask.option
         let first = fixture.wiring.handleSystemRecord(
-            record(keyCode: 0x09, flags: flags, unicode: "√")
+            keyRecord(keyCode: 0x09, flags: flags, unicode: "√")
         )
         XCTAssertEqual(first.delivery, .swallow)
         XCTAssertEqual(first.decision?.mode, .paused)
         XCTAssertEqual(fixture.scanner.scans, 0)
         XCTAssertEqual(fixture.interpreter.mode, .paused)
-        let passed = fixture.wiring.handleSystemRecord(record(keyCode: 0x26, unicode: "j"))
+        let passed = fixture.wiring.handleSystemRecord(keyRecord(keyCode: 0x26, unicode: "j"))
         XCTAssertEqual(passed.delivery, .passThrough)
         XCTAssertTrue(passed.decision?.actions.isEmpty == true)
-        let resume = fixture.wiring.handleSystemRecord(record(keyCode: 0x09, flags: flags, unicode: ""))
+        let resume = fixture.wiring.handleSystemRecord(keyRecord(keyCode: 0x09, flags: flags, unicode: ""))
         XCTAssertEqual(resume.delivery, .swallow)
         XCTAssertEqual(resume.decision?.mode, .normal)
     }
@@ -105,7 +105,7 @@ final class EventTapTests: XCTestCase {
     func testQuestionMarkRecordOpensHelpWithoutDrawing() {
         let fixture = makeWiring(cache: safari)
         let outcome = fixture.wiring.handleSystemRecord(
-            record(keyCode: 0x2C, flags: SystemModifierMask.shift, unicode: "?")
+            keyRecord(keyCode: 0x2C, flags: SystemModifierMask.shift, unicode: "?")
         )
         XCTAssertEqual(fixture.scanner.scans, 0)
         XCTAssertEqual(outcome.delivery, .swallow)
@@ -117,55 +117,55 @@ final class EventTapTests: XCTestCase {
     func testControlBracketRecordPassesTheNextKey() {
         let fixture = makeWiring(cache: safari)
         let chord = fixture.wiring.handleSystemRecord(
-            record(keyCode: 0x1E, flags: SystemModifierMask.control, unicode: "\u{1D}")
+            keyRecord(keyCode: 0x1E, flags: SystemModifierMask.control, unicode: "\u{1D}")
         )
         XCTAssertEqual(chord.delivery, .swallow)
         XCTAssertEqual(chord.decision?.actions, [.passNextKey])
-        let passed = fixture.wiring.handleSystemRecord(record(keyCode: 0x26, unicode: "j"))
+        let passed = fixture.wiring.handleSystemRecord(keyRecord(keyCode: 0x26, unicode: "j"))
         XCTAssertEqual(passed.delivery, .passThrough)
         XCTAssertTrue(passed.decision?.actions.isEmpty == true)
         XCTAssertEqual(fixture.scanner.scans, 0)
-        let scroll = fixture.wiring.handleSystemRecord(record(keyCode: 0x26, unicode: "j"))
+        let scroll = fixture.wiring.handleSystemRecord(keyRecord(keyCode: 0x26, unicode: "j"))
         XCTAssertEqual(scroll.delivery, .swallow)
         XCTAssertEqual(scroll.decision?.actions, [CommandMap().action(for: .scrollDown)])
     }
 
     func testPlainUnicodeWinsOverTheVirtualKeyCode() {
-        let event = SystemKeyTranslation.keyEvent(from: record(keyCode: 0x00, unicode: "j"))
+        let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x00, unicode: "j"))
         XCTAssertEqual(event, KeyEvent("j"))
     }
 
     func testModifiedKeysUseTheUnshiftedVirtualKey() {
         let flags = SystemModifierMask.control | SystemModifierMask.option
-        let event = SystemKeyTranslation.keyEvent(from: record(keyCode: 0x09, flags: flags, unicode: "√"))
+        let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x09, flags: flags, unicode: "√"))
         XCTAssertEqual(event, KeyEvent("v", modifiers: [.control, .option]))
 
         let shifted = SystemModifierMask.control | SystemModifierMask.option | SystemModifierMask.shift
         let shiftedEvent = SystemKeyTranslation.keyEvent(
-            from: record(keyCode: 0x09, flags: shifted, unicode: "◊")
+            from: keyRecord(keyCode: 0x09, flags: shifted, unicode: "◊")
         )
         XCTAssertEqual(shiftedEvent, KeyEvent("v", modifiers: [.control, .option, .shift]))
     }
 
     func testOptionAloneDoesNotBecomeThePauseChord() {
         let event = SystemKeyTranslation.keyEvent(
-            from: record(keyCode: 0x09, flags: SystemModifierMask.option, unicode: "√")
+            from: keyRecord(keyCode: 0x09, flags: SystemModifierMask.option, unicode: "√")
         )
         XCTAssertEqual(event, KeyEvent("v", modifiers: .option))
     }
 
     func testEscapeTranslation() {
         XCTAssertEqual(
-            SystemKeyTranslation.keyEvent(from: record(keyCode: 0x35, unicode: "")),
+            SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x35, unicode: "")),
             KeyEvent(identity: .escape)
         )
         XCTAssertEqual(
-            SystemKeyTranslation.keyEvent(from: record(keyCode: 0x00, unicode: "\u{1B}")),
+            SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x00, unicode: "\u{1B}")),
             KeyEvent(identity: .escape)
         )
         XCTAssertEqual(
             SystemKeyTranslation.keyEvent(
-                from: record(keyCode: 0x35, flags: SystemModifierMask.command, unicode: "")
+                from: keyRecord(keyCode: 0x35, flags: SystemModifierMask.command, unicode: "")
             ),
             KeyEvent(identity: .escape, modifiers: .command)
         )
@@ -175,50 +175,50 @@ final class EventTapTests: XCTestCase {
         let caps = UInt64(0x00010000)
         let fn = UInt64(0x00800000)
         let pad = UInt64(0x00200000)
-        let event = SystemKeyTranslation.keyEvent(from: record(keyCode: 0x0C, flags: caps | fn | pad, unicode: "j"))
+        let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x0C, flags: caps | fn | pad, unicode: "j"))
         XCTAssertEqual(event, KeyEvent("j"))
     }
 
     func testUnmappedModifiedKeyIsUnnamed() {
         let event = SystemKeyTranslation.keyEvent(
-            from: record(keyCode: 0x7A, flags: SystemModifierMask.command, unicode: "")
+            from: keyRecord(keyCode: 0x7A, flags: SystemModifierMask.command, unicode: "")
         )
         XCTAssertEqual(event, KeyEvent(identity: .unnamed, modifiers: .command))
     }
 
     func testModifiedUnmappedKeyKeepsAPlainUnicodeCharacter() {
         let event = SystemKeyTranslation.keyEvent(
-            from: record(keyCode: 0x7A, flags: SystemModifierMask.option, unicode: "ø")
+            from: keyRecord(keyCode: 0x7A, flags: SystemModifierMask.option, unicode: "ø")
         )
         XCTAssertEqual(event, KeyEvent("ø", modifiers: .option))
     }
 
     func testUnmappedPlainKeyIsUnnamed() {
         XCTAssertEqual(
-            SystemKeyTranslation.keyEvent(from: record(keyCode: 0x7A, unicode: "")),
+            SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x7A, unicode: "")),
             KeyEvent(identity: .unnamed)
         )
     }
 
     func testMultiCharacterUnicodeFallsBackToTheVirtualKey() {
-        let event = SystemKeyTranslation.keyEvent(from: record(keyCode: 0x26, unicode: "jj"))
+        let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x26, unicode: "jj"))
         XCTAssertEqual(event, KeyEvent("j"))
     }
 
     func testControlCharacterUnicodeFallsBackToTheVirtualKey() {
-        let event = SystemKeyTranslation.keyEvent(from: record(keyCode: 0x26, unicode: "\u{01}"))
+        let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x26, unicode: "\u{01}"))
         XCTAssertEqual(event, KeyEvent("j"))
     }
 
     func testKeyUpAndNonKeyDownDoNotBecomeKeyEvents() {
-        XCTAssertNil(SystemKeyTranslation.keyEvent(from: record(kind: .keyUp, unicode: "j")))
-        XCTAssertNil(SystemKeyTranslation.keyEvent(from: record(kind: .flagsChanged, unicode: "j")))
-        XCTAssertNil(SystemKeyTranslation.keyEvent(from: record(kind: .other, unicode: "j")))
+        XCTAssertNil(SystemKeyTranslation.keyEvent(from: keyRecord(kind: .keyUp, unicode: "j")))
+        XCTAssertNil(SystemKeyTranslation.keyEvent(from: keyRecord(kind: .flagsChanged, unicode: "j")))
+        XCTAssertNil(SystemKeyTranslation.keyEvent(from: keyRecord(kind: .other, unicode: "j")))
     }
 
     func testRightBracketWithControlIsThePassNextCharacter() {
         let event = SystemKeyTranslation.keyEvent(
-            from: record(keyCode: 0x1E, flags: SystemModifierMask.control, unicode: "\u{1D}")
+            from: keyRecord(keyCode: 0x1E, flags: SystemModifierMask.control, unicode: "\u{1D}")
         )
         XCTAssertEqual(event, KeyEvent("]", modifiers: .control))
     }
@@ -309,7 +309,7 @@ private func makeWiring(cache snapshot: CachedFocus = .unknown) -> WiringFixture
     return WiringFixture(interpreter: interpreter, cache: cache, scanner: scanner, wiring: wiring)
 }
 
-private func record(
+private func keyRecord(
     kind: SystemEventKind = .keyDown,
     keyCode: UInt16 = 0,
     flags: UInt64 = 0,
