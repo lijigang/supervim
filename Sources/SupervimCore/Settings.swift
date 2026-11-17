@@ -32,7 +32,8 @@ public struct PauseShortcut: Equatable, Sendable {
 /// Persisted user settings.
 ///
 /// The value does not read or write the disk, register a login item, or record keystrokes.
-/// `launchAtLogin` is only the saved preference. Task 13 and task 15 register the login item.
+/// `launchAtLogin` is only the saved preference. Task 13 stores the toggle.
+/// Task 15 registers the login item from this flag.
 /// `isPaused` is the saved pause flag. Task 13 feeds it to ModeMachine.
 /// `keySequenceTimeoutMilliseconds` is the prefix timeout task 7 should pass to KeyParser.
 /// The default is 1000, the same value KeyParser uses when no setting is supplied.

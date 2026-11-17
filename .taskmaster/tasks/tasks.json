@@ -2,8 +2,8 @@
   "master": {
     "metadata": {
       "created": "2026-11-17T04:30:00.000Z",
-      "updated": "2026-11-17T06:56:34.000Z",
-      "description": "Supervim 已批准任务。任务 1 到任务 7 已合并，状态为 done。任务 8 和任务 9 为 done。任务 10 到 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
+      "updated": "2026-11-17T07:14:30.000Z",
+      "description": "Supervim 已批准任务。任务 1 到任务 7 已合并，状态为 done。任务 8、任务 9 和任务 13 为 done。任务 10 到 12、14 和 15 为 pending。本文件按 claude-task-master 的 tagged 格式手写，未运行 task-master CLI。"
     },
     "tasks": [
       {
@@ -142,7 +142,7 @@
         "id": 13,
         "title": "菜单栏、暂停、设置与排除列表",
         "description": "菜单栏显示模式，并提供暂停、恢复、设置和排除列表。",
-        "status": "pending",
+        "status": "done",
         "dependencies": [6, 7],
         "priority": "medium",
         "details": "状态栏显示 Normal、Insert 或 Paused。菜单提供暂停、恢复和设置。全局 Ctrl+Option+V 暂停。排除列表默认包含 Terminal、iTerm、Emacs，前台应用命中时完全不拦截。任务 1 的占位菜单只有应用名和退出，本任务才替换成模式显示。全局热键的注册方式和是否需要额外权限若平台不能保证，要写进歧义说明，不能假装已经保证。",

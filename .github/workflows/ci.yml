@@ -59,6 +59,9 @@ jobs:
       - name: Measure AXScanner coverage
         run: scripts/ax-scanner-coverage.sh
 
+      - name: Measure menu bar coverage
+        run: scripts/menu-bar-coverage.sh
+
       - name: Assemble unsigned menu-bar app
         run: scripts/assemble-app.sh
 
