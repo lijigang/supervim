@@ -6,7 +6,7 @@
 - Swift：6.4.2（swift-6.4.2-RELEASE），本机原先没有 Swift，这次用官方 Ubuntu 24.04 工具链解到 `/tmp/swift-install/swift-6.4.2-RELEASE-ubuntu24.04`，只为了跑测试
 - 没有 macOS，没有 Xcode，没有 AppKit，没有 CoreGraphics
 
-因此下面能证明的是标签会话和浮层控制器的先失败、后通过，以及 Linux 上 `HintSession.swift` 和 `HintOverlay.swift` 的覆盖率。不能证明面板真的出现在屏幕上，也不能证明点击落在 Safari、Finder 或系统设置的按钮上。macOS 上的编译、同一组测试和覆盖率交给 GitHub Actions。写本文时那次 CI 还没有结果。
+因此下面能证明的是标签会话和浮层控制器的先失败、后通过，以及 Linux 上 `HintSession.swift` 和 `HintOverlay.swift` 的覆盖率。不能证明面板真的出现在屏幕上，也不能证明点击落在 Safari、Finder 或系统设置的按钮上。macOS 上的编译、同一组测试和覆盖率交给 GitHub Actions。
 
 规格里的 200ms 和可访问按钮、链接 90% 覆盖率**没有测**。本文的覆盖率是源码行覆盖率，不是那个验收目标。
 
@@ -155,6 +155,22 @@ HintOverlay.swift function coverage: 100.00% (18/18)
 - 没有确认虚拟键 `0x33` 就是这台 Mac 上的退格
 - 没有安装 `CGEventTap`，所以占位程序里按 `f` 还不会出标签
 - 没有走真实的辅助功能树，也没有让指针真的移动
+
+## macOS CI：第一次编译失败
+
+第一次 macOS 运行：<https://github.com/lijigang/supervim/actions/runs/44037834128>，作业 <https://github.com/lijigang/supervim/actions/runs/44037834128/job/133884918215>。提交 `9dceaf4`。`swift build` 失败，退出码 1。测试还没开始。Xcode 26.6，Swift 6.3.3，`macos-26-arm64`。
+
+错误只有一处，不是点击行为不对：
+
+```text
+HintOverlayWindow.swift:28:43: error: escaping closure captures non-escaping parameter 'body'
+```
+
+`PanelDispatch.perform` 把调用方的闭包存进了一个变量。存起来的闭包是逃逸的，参数默认不是。Linux 上这个文件整段在 `#if canImport(AppKit)` 里，所以这里编译不到。
+
+改法只在面板调度里：不再把闭包存进变量，主线程和 `DispatchQueue.main.sync` 里直接调用。标签、点击和测试期望没有改。同一份日志里 `AXApplicationReader.swift` 有一条原有的 `unsafeBitCast` 警告，不是这次失败的原因，也没有改那个文件。
+
+改完之后在 Linux 上再跑 `swift test --filter HintOverlayTests`。时间：2026-11-17 07:23:00 UTC 到 07:23:02 UTC。退出码 0。没有编译警告。`HintOverlayTests` 28 个通过。这只证明源码扫描和控制器测试仍然通过。macOS 是否编译通过，看这一次之后的 `macos-latest` 运行。
 
 ## 手工验收时要看的
 

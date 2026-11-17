@@ -24,15 +24,18 @@ public final class NonActivatingHintPanel: OverlayPresenting, @unchecked Sendabl
 }
 
 private enum PanelDispatch {
+    /// The operation is not stored. A stored closure is escaping, and the
+    /// caller’s panel update is not.
     static func perform(_ body: @MainActor (PanelHolder) -> Void) {
-        let work: @MainActor () -> Void = {
-            body(PanelRegistry.shared.current())
-        }
         if Thread.isMainThread {
-            MainActor.assumeIsolated(work)
+            MainActor.assumeIsolated {
+                body(PanelRegistry.shared.current())
+            }
         } else {
             DispatchQueue.main.sync {
-                MainActor.assumeIsolated(work)
+                MainActor.assumeIsolated {
+                    body(PanelRegistry.shared.current())
+                }
             }
         }
     }
