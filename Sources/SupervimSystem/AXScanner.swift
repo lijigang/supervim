@@ -1036,8 +1036,13 @@ public final class AXScanner: AccessibilityScanning, @unchecked Sendable {
         return cache.currentFocus()
     }
 
+    /// The longest one walk for `f` may take. It is a ceiling for a tree
+    /// that never ends, not a target: a cut walk loses the deepest nodes
+    /// first, and in a browser those are the page.
+    public static let hintScanBudgetMilliseconds = 1_000.0
+
     public func clickableElements() -> ClickableQuery {
-        scanWindow().clickables
+        scanWindow(budgetMilliseconds: Self.hintScanBudgetMilliseconds).clickables
     }
 
     /// Called with every finished scan, on the thread that scanned.

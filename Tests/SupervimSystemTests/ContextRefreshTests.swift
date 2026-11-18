@@ -25,6 +25,17 @@ final class ContextRefreshTests: XCTestCase {
         XCTAssertEqual(reader.adopted, [1])
     }
 
+    func testHintScanHasADeadlineAndABackgroundScanHasNone() {
+        let reader = LazyReader(windows: [("focused", window(button: true, field: false))])
+        let rig = ScannerRig(reader: reader)
+        _ = rig.scanner.clickableElements()
+        _ = rig.scanner.scanWindow()
+        XCTAssertEqual(reader.budgets, [AXScanner.hintScanBudgetMilliseconds, nil])
+        // Long enough for a full page in a slow app, short enough that a
+        // tree that never ends still gives labels.
+        XCTAssertEqual(AXScanner.hintScanBudgetMilliseconds, 1_000)
+    }
+
     func testWindowsAfterTheFirstUsableOneAreNotWalked() {
         let reader = LazyReader(windows: [
             ("focused", window(button: true, field: false)),
@@ -59,7 +70,7 @@ final class ContextRefreshTests: XCTestCase {
         _ = rig.scanner.clickableElements()
         _ = rig.scanner.scanWindow(budgetMilliseconds: 50)
         XCTAssertEqual(seen.values, ["focused:1", "focused:1"])
-        XCTAssertEqual(reader.budgets, [nil, 50])
+        XCTAssertEqual(reader.budgets, [AXScanner.hintScanBudgetMilliseconds, 50])
     }
 
     func testScanTimingIsLogged() {
