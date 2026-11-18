@@ -7,6 +7,15 @@ import SupervimCore
 /// Builds the scanner, actuator, and event tap around the menu's interpreter.
 /// Permission checks do not prompt. Task 14 owns the guide.
 /// `SupervimRuntime.start` starts the scanner before installing the hook.
+///
+/// Four places run code, and none waits for another.
+///
+/// The tap thread decides what a key means from cached state and returns.
+/// The scan queue reads the focused element and walks the window: after a
+/// focus change, after a click, and for `f`. The actuate queue posts
+/// events and makes accessibility writes. The main thread draws the labels
+/// and the menu. A slow app can hold up the scan queue or the actuate
+/// queue. It cannot hold up a key.
 public enum MenuHookAssembly {
     public static func make(
         decider: EventInterpreter<SystemKeyClock>,
@@ -16,16 +25,17 @@ public enum MenuHookAssembly {
         let scrollElements = AXElementStore()
         let focuser = AXInputFocuser()
         let reader = AXSystemReader(scrollElements: scrollElements, inputs: focuser)
-        let signals = AXFocusSignal()
-        let fanout = FanoutSignals(inner: signals)
+        let relay = FocusRelay(inner: AXFocusSignal())
         let pipeline = FocusPipeline(
             decider: decider,
             reader: reader,
-            signals: fanout,
+            signals: relay,
             waiter: AccessibilityTreeSleeper()
         )
+        let scanWork = QueueWork(label: "supervim.scan", qos: .userInteractive)
+        let actWork = QueueWork(label: "supervim.actuate", qos: .userInteractive)
         let poster = CGEventActuatorPoster(accessibility: scrollElements)
-        let actuator = ActionActuator(poster: poster, edgeBars: scrollElements)
+        let actuator = ActionActuator(poster: poster, edgeBars: scrollElements, deferral: actWork)
         let panel = NonActivatingHintPanel()
         let vision = SystemVisionHints {
             decider.settingsSnapshot().visionBundleIdentifiers
@@ -37,7 +47,9 @@ public enum MenuHookAssembly {
             mode: decider,
             misses: misses,
             vision: vision,
-            frontBundle: { pipeline.cache.currentFocus().bundleIdentifier }
+            frontBundle: { pipeline.cache.currentFocus().bundleIdentifier },
+            scanning: scanWork,
+            visionBundles: { decider.settingsSnapshot().visionBundleIdentifiers }
         )
         let help = HelpController(presenter: panel)
         let snapshots = LockedCommandSnapshot(snapshot: .unavailable)
@@ -51,25 +63,43 @@ public enum MenuHookAssembly {
             hints: hints,
             help: help,
             banner: misses,
-            windows: CGFrontWindow(),
-            visionBundles: { decider.settingsSnapshot().visionBundleIdentifiers }
+            visionBundles: { decider.settingsSnapshot().visionBundleIdentifiers },
+            deferral: actWork
         )
-        let refresh = SnapshotRefresh(
-            reader: reader,
+        let menu = ModeChangeObserver(inner: observer)
+        let refresher = ContextRefresher(
             scanner: pipeline.scanner,
-            session: session,
-            hints: hints,
-            observer: observer
+            focus: pipeline.cache,
+            mode: { decider.mode },
+            work: scanWork,
+            publish: { snapshot in session.replaceSnapshot(snapshot) },
+            modeChanged: { menu.runtimeDidHandle(nil) },
+            windows: CGFrontWindow()
         )
-        fanout.extra = refresh
-        let adapter = SessionTapAdapter(session: session, observer: refresh)
+        relay.attach(refresher)
+        misses.onReport {
+            menu.runtimeDidHandle(nil)
+        }
+        hints.onActivation { [weak refresher] in
+            refresher?.actuated()
+            menu.runtimeDidHandle(nil)
+        }
+        let adapter = SessionTapAdapter(
+            session: session,
+            observer: menu,
+            followUp: refresher,
+            focus: pipeline.cache
+        )
         let tap = CGEventTapSession(wiring: adapter)
-        let starter = ScannerStarter(scanner: pipeline.scanner, after: refresh)
+        let starter = ScannerStarter(scanner: pipeline.scanner, refresher: refresher, panel: panel)
         return SupervimRuntime(
             permissions: SystemHookPermission(),
             focus: starter,
             hook: tap,
-            owners: [pipeline, session, adapter, tap, poster, focuser, hints, help, panel, refresh, starter, fanout, vision]
+            owners: [
+                pipeline, session, adapter, tap, poster, focuser, hints, help, panel,
+                refresher, starter, relay, vision, menu, scanWork, actWork,
+            ]
         )
     }
 }
@@ -96,83 +126,58 @@ private final class QuartzPointer: PointerReading, @unchecked Sendable {
 
 private final class ScannerStarter: FocusMonitoring, @unchecked Sendable {
     private let scanner: AXScanner
-    private let after: SnapshotRefresh
+    private let refresher: ContextRefresher
+    private let panel: NonActivatingHintPanel
 
-    init(scanner: AXScanner, after: SnapshotRefresh) {
+    init(scanner: AXScanner, refresher: ContextRefresher, panel: NonActivatingHintPanel) {
         self.scanner = scanner
-        self.after = after
+        self.refresher = refresher
+        self.panel = panel
     }
 
     func start() {
         scanner.start()
-        after.refresh()
+        refresher.focusMayHaveChanged()
+        panel.prewarm()
     }
 }
 
-private final class SnapshotRefresh: RuntimeObserving, @unchecked Sendable {
-    private let reader: AXSystemReader
-    private let scanner: AXScanner
-    private let session: NormalCommandSession
-    private let hints: HintController
-    private let observer: any RuntimeObserving
-
-    init(
-        reader: AXSystemReader,
-        scanner: AXScanner,
-        session: NormalCommandSession,
-        hints: HintController,
-        observer: any RuntimeObserving
-    ) {
-        self.reader = reader
-        self.scanner = scanner
-        self.session = session
-        self.hints = hints
-        self.observer = observer
-    }
-
-    func refresh() {
-        _ = hints.refreshClickables()
-        let limits = TreeWalkLimits.standard
-        let window = reader.readFrontmostWindow(maxNodes: limits.maxNodes, maxDepth: limits.maxDepth)
-        let frame: ElementFrame?
-        switch reader.readFocusedElement() {
-        case .value(let element):
-            frame = element.frame
-        case .unavailable:
-            frame = nil
-        }
-        session.replaceSnapshot(
-            CommandSnapshotBuilder.make(
-                window: window,
-                focusedFrame: frame,
-                firstInput: scanner.firstEditableInput(),
-                limits: limits
-            )
-        )
-    }
-
-    func runtimeDidHandle(_ decision: EventDecision?) {
-        observer.runtimeDidHandle(decision)
-    }
-}
-
-private final class FanoutSignals: FocusChangeSignaling, @unchecked Sendable {
+/// Sends focus notifications to the refresher.
+///
+/// The scanner's own handler reads the focused element on the thread the
+/// notification arrives on, which is the main run loop. The refresher does
+/// that read on the scan queue, so the handler the scanner passes in is
+/// not used.
+private final class FocusRelay: FocusChangeSignaling, @unchecked Sendable {
     private let inner: AXFocusSignal
-    var extra: SnapshotRefresh?
+    private let lock = NSLock()
+    private weak var refresher: ContextRefresher?
 
     init(inner: AXFocusSignal) {
         self.inner = inner
     }
 
+    func attach(_ refresher: ContextRefresher) {
+        lock.lock()
+        self.refresher = refresher
+        lock.unlock()
+    }
+
     func start(_ handler: @escaping @Sendable () -> Void) {
+        _ = handler
         inner.start { [weak self] in
-            handler()
-            self?.extra?.refresh()
+            self?.current()?.focusMayHaveChanged()
         }
     }
 
     func stop() {
         inner.stop()
+    }
+
+    private func current() -> ContextRefresher? {
+        lock.lock()
+        defer { lock.unlock() }
+        return refresher
     }
 }
 #endif

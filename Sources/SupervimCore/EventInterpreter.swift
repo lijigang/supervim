@@ -1,3 +1,5 @@
+import Foundation
+
 /// Where a key goes after the event tap has decided.
 /// `passThrough` gives it back to the focused app. `swallow` keeps it.
 public enum KeyDelivery: Equatable, Sendable {
@@ -133,12 +135,20 @@ public struct EventDecision: Equatable, Sendable {
 /// Ctrl+Option+V (or the shortcut stored in Settings) is `togglePause` and is not
 /// fed to the parser. A saved `Settings.isPaused` starts the machine paused.
 /// Menu pause and the chord both write that flag back onto the in-memory settings.
+///
+/// Every entry point takes one lock. The event tap has its own thread, focus
+/// reports come from a background queue, hint results from another, and the
+/// menu from the main thread.
 public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     public let clock: Clock
 
     public var mode: SupervimMode {
-        machine.mode
+        gate.lock()
+        defer { gate.unlock() }
+        return machine.mode
     }
+
+    private let gate = NSRecursiveLock()
 
     private var settings: Settings
     private var cache: CachedFocus
@@ -169,12 +179,16 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     }
 
     public func settingsSnapshot() -> Settings {
-        settings
+        gate.lock()
+        defer { gate.unlock() }
+        return settings
     }
 
     /// Menu pause. This is not a key, so the decision passes the event through.
     /// A pending prefix is dropped and is not replayed after resume.
     public func pause() -> EventDecision {
+        gate.lock()
+        defer { gate.unlock() }
         let previous = machine.mode
         _ = parser.suspendParsing()
         let step = machine.handle(.pause)
@@ -191,6 +205,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
 
     /// Menu resume. A resume while the machine is not paused leaves the mode alone.
     public func resume() -> EventDecision {
+        gate.lock()
+        defer { gate.unlock() }
         let previous = machine.mode
         let step = machine.handle(.resume)
         settings.isPaused = machine.mode == .paused
@@ -205,6 +221,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     }
 
     public func handleKeyDown(_ event: KeyEvent, cache: CachedFocus) -> EventDecision {
+        gate.lock()
+        defer { gate.unlock() }
         let previous = machine.mode
         let holdBefore = heldComposer
         let transition = apply(cache)
@@ -235,6 +253,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     /// Applies a snapshot between keys. Does not scan and does not swallow a key.
     @discardableResult
     public func updateCache(_ cache: CachedFocus) -> EventDecision {
+        gate.lock()
+        defer { gate.unlock() }
         let previous = machine.mode
         let decision = applyCache(cache)
         trace("focus", from: previous)
@@ -244,6 +264,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     /// Leaves Hint after a label was clicked or the overlay gave up.
     /// Does nothing to a prefix or to another mode. The key hook does not call this.
     public func endHint(_ reason: HintEnd) -> EventDecision {
+        gate.lock()
+        defer { gate.unlock() }
         let previous = machine.mode
         let input: ModeInput
         switch reason {
@@ -269,6 +291,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     /// A click inside the input that Esc is holding re-enters Insert.
     /// A click anywhere else leaves Normal alone and does not swallow the click.
     public func acceptPointerClick(x: Double, y: Double) -> EventDecision {
+        gate.lock()
+        defer { gate.unlock() }
         let previous = machine.mode
         guard let frame = cache.frame,
               heldComposer != nil,
@@ -286,6 +310,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
 
     /// `gi` drops the Esc hold so the following focus read can enter Insert.
     public func releaseHeldInput() {
+        gate.lock()
+        defer { gate.unlock() }
         heldComposer = nil
     }
 
@@ -293,6 +319,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     /// The cause is manual, so a not-editable notification does not leave Insert.
     @discardableResult
     public func enterInsertAfterFocus() -> SupervimMode {
+        gate.lock()
+        defer { gate.unlock() }
         let previous = machine.mode
         heldComposer = nil
         _ = machine.holdManualInsert()
@@ -301,6 +329,8 @@ public final class EventInterpreter<Clock: KeyTimeSource>: @unchecked Sendable {
     }
 
     public func replaceSettings(_ settings: Settings) {
+        gate.lock()
+        defer { gate.unlock() }
         let timeoutChanged = settings.keySequenceTimeoutMilliseconds != self.settings.keySequenceTimeoutMilliseconds
         self.settings = settings
         if timeoutChanged {

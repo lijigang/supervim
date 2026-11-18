@@ -82,17 +82,49 @@ public final class SupervimRuntime: @unchecked Sendable {
 }
 
 /// Forwards tap records to the command session, then tells the menu.
+///
+/// The time from the record arriving to the delivery being known is the time
+/// the system waits before it delivers the key. It is logged when it is long
+/// enough to notice, and always for a swallowed command.
 public final class SessionTapAdapter: SystemKeyHandling, @unchecked Sendable {
+    public static let slowCallbackMilliseconds = 8.0
+
     private let session: NormalCommandSession
     private let observer: any RuntimeObserving
+    private let followUp: (any TapFollowUp)?
+    private let focus: (any FocusCacheReading)?
 
-    public init(session: NormalCommandSession, observer: any RuntimeObserving) {
+    public init(
+        session: NormalCommandSession,
+        observer: any RuntimeObserving,
+        followUp: (any TapFollowUp)? = nil,
+        focus: (any FocusCacheReading)? = nil
+    ) {
         self.session = session
         self.observer = observer
+        self.followUp = followUp
+        self.focus = focus
     }
 
     public func handleSystemRecord(_ record: SystemKeyRecord) -> SystemKeyOutcome {
+        let watch = TraceStopwatch()
         let performance = session.handleSystemRecord(record)
+        let elapsed = watch.milliseconds
+        if record.sourceUserData != SynthesizedEventMark.userData {
+            if record.pointerX != nil {
+                followUp?.pointerClicked()
+            } else if record.kind == .keyDown, focus?.currentFocus().editability == .unknown {
+                followUp?.keyWhileFocusUnknown()
+            }
+        }
+        if ModeTrace.isEnabled, record.kind == .keyDown,
+           performance.delivery == .swallow || elapsed >= Self.slowCallbackMilliseconds {
+            ModeTrace.noteTiming(
+                stage: "tap",
+                milliseconds: elapsed,
+                fields: [("delivery", performance.delivery == .swallow ? "swallow" : "pass")]
+            )
+        }
         observer.runtimeDidHandle(performance.decision)
         return SystemKeyOutcome(delivery: performance.delivery, decision: performance.decision)
     }

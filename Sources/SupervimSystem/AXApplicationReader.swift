@@ -19,13 +19,33 @@ import AppKit
 /// becomes true without restarting after the user grants Accessibility is not a
 /// platform guarantee and is unverified. This type does not prompt.
 ///
-/// The focused-element read copies one element. Child walks happen only in the
-/// window read, which callers use off the key hook.
+/// Every call here waits for another process. None of it runs on the key
+/// hook. Three things keep the wait short.
+///
+/// One round trip per node. A node's role, subrole, position, size,
+/// children, editable flag, enabled flag and scroll bars come back from one
+/// `AXUIElementCopyMultipleAttributeValues`. Action names are a second
+/// call, and only for roles that can be clicked.
+///
+/// A bounded wait. `AXUIElementSetMessagingTimeout` replaces the default of
+/// about six seconds per call. An app that does not answer ends the walk.
+///
+/// Less to read. `AccessibilityTreeWalker` reads a level of the tree on
+/// several threads, skips what the window and its scroll areas hide, and
+/// stops at a deadline. Windows are walked one at a time, and the rest are
+/// not walked once one has been accepted.
 public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
+    /// How long one accessibility call may wait for the app.
+    public static let messagingTimeoutSeconds: Float = 0.75
+    /// Threads that read one level of the tree.
+    public static let walkWorkers = 4
+
     private let identities = FocusIdentityVault()
     private let expansions = AccessibilityExpander()
     private let scrollElements: AXElementStore?
     private let inputs: AXInputFocuser?
+    private let ledger = WalkLedger()
+    private let messaging = MessagingTimeout()
 
     public init(scrollElements: AXElementStore? = nil, inputs: AXInputFocuser? = nil) {
         self.scrollElements = scrollElements
@@ -51,11 +71,20 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
         guard AXIsProcessTrusted() else {
             return .unavailable
         }
+        messaging.applyOnce(seconds: Self.messagingTimeoutSeconds)
         let system = AXUIElementCreateSystemWide()
         guard let element = copyElement(system, kAXFocusedUIElementAttribute) else {
             return .unavailable
         }
-        return .value(snapshot(of: element, identify: true))
+        var copied: AccessibilityElement
+        switch readLiveNode(element, attributes: LiveAttributes.focus, slowMilliseconds: slowMilliseconds) {
+        case .node(let reading):
+            copied = reading.element
+        case .gone, .unresponsive:
+            return .unavailable
+        }
+        copied.identity = focusIdentity(element)
+        return .value(copied)
     }
 
     public func readFrontmostBundleIdentifier() -> AccessibilityRead<String> {
@@ -76,60 +105,70 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
     }
 
     public func readFrontmostWindow(maxNodes: Int, maxDepth: Int) -> AccessibilityRead<AccessibilityElement> {
-        let choices = liveChoices(maxNodes: maxNodes, maxDepth: maxDepth)
         let limits = TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth)
-        if let choice = choices.first(where: { $0.found && ($0.element?.children.isEmpty == false) }),
-           let element = choice.element {
-            rememberScrollElements(choice.live, limits: limits)
+        var kept: AccessibilityWindowChoice?
+        let choices = readWindowChoices(limits: limits, budgetMilliseconds: nil) { choice in
+            guard choice.found, choice.element?.children.isEmpty == false else {
+                return false
+            }
+            kept = choice
+            return true
+        }
+        if let kept, let element = kept.element {
+            adoptWalk(kept.walk)
             return .value(element)
         }
-        if let application = liveApplication(maxNodes: maxNodes, maxDepth: maxDepth),
+        if let application = readApplicationChoice(limits: limits, budgetMilliseconds: nil),
            let element = application.element,
            !element.children.isEmpty {
-            rememberScrollElements(application.live, limits: limits)
+            adoptWalk(application.walk)
             return .value(element)
         }
         if let choice = choices.first(where: \.found), let element = choice.element {
-            rememberScrollElements(choice.live, limits: limits)
+            adoptWalk(choice.walk)
             return .value(element)
         }
-        scrollElements?.reset()
+        adoptWalk(nil)
         return .unavailable
     }
 
     public func readWindowChoices(maxNodes: Int, maxDepth: Int) -> [AccessibilityWindowChoice] {
-        liveChoices(maxNodes: maxNodes, maxDepth: maxDepth).map { choice in
-            AccessibilityWindowChoice(source: choice.source, found: choice.found, element: choice.element)
+        readWindowChoices(
+            limits: TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth),
+            budgetMilliseconds: nil
+        ) { _ in
+            false
         }
     }
 
-    public func readApplicationElement(maxNodes: Int, maxDepth: Int) -> AccessibilityElement? {
-        liveApplication(maxNodes: maxNodes, maxDepth: maxDepth)?.element
-    }
-
-    private struct LiveChoice {
-        var source: String
-        var found: Bool
-        var element: AccessibilityElement?
-        var live: AXUIElement?
-    }
-
-    private func liveChoices(maxNodes: Int, maxDepth: Int) -> [LiveChoice] {
+    /// Focused window, then main window, then `AXWindows`. A window is
+    /// walked when its turn comes and offered to `accept` at once. After
+    /// `accept` says yes, or after the app stopped answering, no other
+    /// window is read.
+    public func readWindowChoices(
+        limits: TreeWalkLimits,
+        budgetMilliseconds: Double?,
+        accept: (AccessibilityWindowChoice) -> Bool
+    ) -> [AccessibilityWindowChoice] {
+        let missing = [AccessibilityWindowChoice(source: "focused", found: false, element: nil)]
         guard AXIsProcessTrusted() else {
-            return [LiveChoice(source: "focused", found: false, element: nil, live: nil)]
+            return missing
         }
+        messaging.applyOnce(seconds: Self.messagingTimeoutSeconds)
         let system = AXUIElementCreateSystemWide()
         guard let application = copyElement(system, kAXFocusedApplicationAttribute) else {
-            return [LiveChoice(source: "focused", found: false, element: nil, live: nil)]
+            return missing
         }
-        let limits = TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth)
-        inputs?.resetInputs()
-        var choices: [LiveChoice] = []
+        var choices: [AccessibilityWindowChoice] = []
         var seen: [AXUIElement] = []
-        func append(_ element: AXUIElement?, source: String, recordMiss: Bool) {
+        var finished = false
+        func offer(_ element: AXUIElement?, source: String, recordMiss: Bool) {
+            guard !finished else {
+                return
+            }
             guard let element else {
                 if recordMiss {
-                    choices.append(LiveChoice(source: source, found: false, element: nil, live: nil))
+                    choices.append(AccessibilityWindowChoice(source: source, found: false, element: nil))
                 }
                 return
             }
@@ -137,74 +176,143 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
                 return
             }
             seen.append(element)
-            choices.append(LiveChoice(
+            let walked = walkTree(element, limits: limits, budgetMilliseconds: budgetMilliseconds, source: source)
+            let choice = AccessibilityWindowChoice(
                 source: source,
-                found: true,
-                element: copiedTree(element, limits: limits),
-                live: element
-            ))
+                found: walked.root != nil,
+                element: walked.root,
+                walk: walked.walk
+            )
+            choices.append(choice)
+            if walked.unresponsive || accept(choice) {
+                finished = true
+            }
         }
-        append(copyElement(application, kAXFocusedWindowAttribute), source: "focused", recordMiss: true)
-        append(copyElement(application, kAXMainWindowAttribute), source: "main", recordMiss: true)
-        let windows = copyElements(application, kAXWindowsAttribute)
-        if windows.isEmpty {
-            choices.append(LiveChoice(source: "windows", found: false, element: nil, live: nil))
-        } else {
-            for window in windows.prefix(8) {
-                append(window, source: "windows", recordMiss: false)
+        offer(copyElement(application, kAXFocusedWindowAttribute), source: "focused", recordMiss: true)
+        if !finished {
+            offer(copyElement(application, kAXMainWindowAttribute), source: "main", recordMiss: true)
+        }
+        if !finished {
+            let windows = copyElements(application, kAXWindowsAttribute)
+            if windows.isEmpty {
+                choices.append(AccessibilityWindowChoice(source: "windows", found: false, element: nil))
+            } else {
+                for window in windows.prefix(8) {
+                    offer(window, source: "windows", recordMiss: false)
+                }
             }
         }
         return choices
     }
 
-    private func liveApplication(maxNodes: Int, maxDepth: Int) -> LiveChoice? {
+    public func readApplicationElement(maxNodes: Int, maxDepth: Int) -> AccessibilityElement? {
+        readApplicationChoice(
+            limits: TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth),
+            budgetMilliseconds: nil
+        )?.element
+    }
+
+    public func readApplicationChoice(
+        limits: TreeWalkLimits,
+        budgetMilliseconds: Double?
+    ) -> AccessibilityWindowChoice? {
         guard AXIsProcessTrusted() else {
             return nil
         }
+        messaging.applyOnce(seconds: Self.messagingTimeoutSeconds)
         let system = AXUIElementCreateSystemWide()
         guard let application = copyElement(system, kAXFocusedApplicationAttribute) else {
             return nil
         }
-        return LiveChoice(
-            source: "application",
-            found: true,
-            element: copiedTree(application, limits: TreeWalkLimits(maxNodes: maxNodes, maxDepth: maxDepth)),
-            live: application
+        let walked = walkTree(
+            application,
+            limits: limits,
+            budgetMilliseconds: budgetMilliseconds,
+            source: "application"
         )
+        guard let root = walked.root else {
+            return nil
+        }
+        return AccessibilityWindowChoice(source: "application", found: true, element: root, walk: walked.walk)
     }
 
-    /// Binds the chosen window under the same path keys the catalog will use.
-    /// The copy used for the catalog is separate; this walk only keeps elements.
-    private func rememberScrollElements(_ element: AXUIElement?, limits: TreeWalkLimits) {
-        guard let scrollElements else {
+    /// Binds the elements of one walk under the path keys the catalog and
+    /// the hint labels use: every node for presses and scroll bars, text
+    /// inputs for `gi`. The other walks are forgotten, so a path can only
+    /// mean an element of the window that was chosen.
+    public func adoptWalk(_ walk: Int?) {
+        let stored = ledger.take(walk)
+        inputs?.resetInputs()
+        guard let stored else {
+            scrollElements?.reset()
             return
         }
-        scrollElements.reset()
-        guard let element else {
-            return
+        var elements: [String: AXUIElement] = [:]
+        elements.reserveCapacity(stored.bound.count)
+        for bound in stored.bound {
+            elements[ScrollTargetIdentity.identifier(path: bound.path)] = bound.node.element
+            if let node = copiedNode(at: bound.path, in: stored.root),
+               InputChoice.isTextInput(role: node.role, subrole: node.subrole) {
+                inputs?.bindInput(bound.node.element, path: bound.path)
+            }
         }
-        var remaining = limits.maxNodes
-        _ = snapshotTree(element, path: [], depth: 0, limits: limits, remaining: &remaining, bind: true)
+        scrollElements?.replace(with: elements)
     }
 
-    private func copiedTree(_ element: AXUIElement, limits: TreeWalkLimits) -> AccessibilityElement {
-        var remaining = limits.maxNodes
-        return snapshotTree(element, path: [], depth: 0, limits: limits, remaining: &remaining, bind: false)
+    private var slowMilliseconds: Double {
+        Double(Self.messagingTimeoutSeconds) * 1_000 * 0.8
     }
 
-    private func snapshot(of element: AXUIElement, identify: Bool = false) -> AccessibilityElement {
-        let role = copyString(element, kAXRoleAttribute)
-        let subrole = copyString(element, kAXSubroleAttribute)
-        return AccessibilityElement(
-            role: role,
-            subrole: subrole,
-            actions: copyActions(element),
-            editableAttribute: copyBool(element, "AXEditable" as CFString),
-            identity: identify ? focusIdentity(element) : nil,
-            frame: copyFrame(element),
-            verticalScroll: copyScrollBar(element, kAXVerticalScrollBarAttribute),
-            horizontalScroll: copyScrollBar(element, kAXHorizontalScrollBarAttribute)
+    private struct Walked {
+        var root: AccessibilityElement?
+        var walk: Int?
+        var unresponsive: Bool
+    }
+
+    private func walkTree(
+        _ element: AXUIElement,
+        limits: TreeWalkLimits,
+        budgetMilliseconds: Double?,
+        source: String
+    ) -> Walked {
+        let walked = AccessibilityTreeWalker.walk(
+            root: LiveNode(element: element),
+            source: LiveNodeSource(slowMilliseconds: slowMilliseconds),
+            options: TreeWalkOptions(
+                limits: limits,
+                budgetMilliseconds: budgetMilliseconds,
+                workers: Self.walkWorkers
+            )
         )
+        ModeTrace.noteTiming(
+            stage: "ax-walk",
+            milliseconds: walked.milliseconds,
+            fields: [
+                ("window", source),
+                ("nodes", "\(walked.read)"),
+                ("pruned", "\(walked.pruned)"),
+                ("levels", "\(walked.levels)"),
+                ("truncated", walked.truncated ? "1" : "0"),
+                ("deadline", walked.timedOut ? "1" : "0"),
+                ("unresponsive", walked.unresponsive ? "1" : "0"),
+            ]
+        )
+        guard let root = walked.root else {
+            return Walked(root: nil, walk: nil, unresponsive: walked.unresponsive)
+        }
+        let token = ledger.store(StoredWalk(root: root, bound: walked.bound))
+        return Walked(root: root, walk: token, unresponsive: walked.unresponsive)
+    }
+
+    private func copiedNode(at path: [Int], in root: AccessibilityElement) -> AccessibilityElement? {
+        var node = root
+        for index in path {
+            guard node.children.indices.contains(index) else {
+                return nil
+            }
+            node = node.children[index]
+        }
+        return node
     }
 
     /// The same accessibility element keeps one token across reads.
@@ -213,52 +321,233 @@ public final class AXSystemReader: AccessibilityReading, @unchecked Sendable {
     private func focusIdentity(_ element: AXUIElement) -> String {
         identities.token(for: element)
     }
+}
 
-    private func snapshotTree(
-        _ element: AXUIElement,
-        path: [Int],
-        depth: Int,
-        limits: TreeWalkLimits,
-        remaining: inout Int,
-        bind: Bool
-    ) -> AccessibilityElement {
-        remaining -= 1
-        if bind {
-            scrollElements?.bind(element, identifier: ScrollTargetIdentity.identifier(path: path))
-        }
-        var node = snapshot(of: element)
-        if InputChoice.isTextInput(role: node.role, subrole: node.subrole) {
-            inputs?.bindInput(element, path: path)
-        }
-        let children = copyChildren(element)
-        if children.isEmpty {
-            return node
-        }
-        if remaining <= 0 || depth >= limits.maxDepth {
-            node.childrenTruncated = true
-            return node
-        }
-        var copied: [AccessibilityElement] = []
-        for (index, child) in children.enumerated() {
-            if remaining <= 0 {
-                node.childrenTruncated = true
-                break
-            }
-            copied.append(snapshotTree(
-                child,
-                path: path + [index],
-                depth: depth + 1,
-                limits: limits,
-                remaining: &remaining,
-                bind: bind
-            ))
-        }
-        if copied.count < children.count {
-            node.childrenTruncated = true
-        }
-        node.children = copied
-        return node
+extension AXSystemReader {
+    /// Copies the tree under one element with the given options. The
+    /// benchmark uses it to time one window with different settings.
+    static func copyTree(_ element: AXUIElement, options: TreeWalkOptions) -> WalkedTree<LiveNode> {
+        AccessibilityTreeWalker.walk(
+            root: LiveNode(element: element),
+            source: LiveNodeSource(slowMilliseconds: Double(messagingTimeoutSeconds) * 1_000 * 0.8),
+            options: options
+        )
     }
+}
+
+/// A live element handed between the threads of one walk. The element is
+/// only ever passed to accessibility calls, which may be made from any thread.
+struct LiveNode: @unchecked Sendable {
+    let element: AXUIElement
+}
+
+private struct StoredWalk {
+    var root: AccessibilityElement
+    var bound: [BoundNode<LiveNode>]
+}
+
+/// Walks that have been copied and not yet adopted. A scan makes at most a
+/// few before it adopts one, so the oldest are dropped past a small count.
+private final class WalkLedger: @unchecked Sendable {
+    private let lock = NSLock()
+    private var next = 0
+    private var walks: [(token: Int, walk: StoredWalk)] = []
+
+    func store(_ walk: StoredWalk) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        next += 1
+        walks.append((next, walk))
+        if walks.count > 12 {
+            walks.removeFirst(walks.count - 12)
+        }
+        return next
+    }
+
+    func take(_ token: Int?) -> StoredWalk? {
+        lock.lock()
+        defer { lock.unlock() }
+        let found = walks.first(where: { $0.token == token })?.walk
+        walks.removeAll()
+        return found
+    }
+}
+
+private final class MessagingTimeout: @unchecked Sendable {
+    private let lock = NSLock()
+    private var applied = false
+
+    /// Set on the system-wide element, the timeout applies to every
+    /// accessibility call this process makes.
+    func applyOnce(seconds: Float) {
+        lock.lock()
+        let needed = !applied
+        applied = true
+        lock.unlock()
+        guard needed else {
+            return
+        }
+        let error = AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), seconds)
+        ModeTrace.noteLine("ax-timeout seconds=\(seconds) set=\(error == .success ? 1 : 0)")
+    }
+}
+
+/// Attribute lists for the one round trip a node costs. The order is the
+/// order of the values that come back.
+private enum LiveAttributes {
+    static let walk: [String] = [
+        kAXRoleAttribute,
+        kAXSubroleAttribute,
+        kAXPositionAttribute,
+        kAXSizeAttribute,
+        "AXEditable",
+        kAXEnabledAttribute,
+        kAXVerticalScrollBarAttribute,
+        kAXHorizontalScrollBarAttribute,
+        kAXChildrenAttribute,
+    ]
+    /// The focused element is classified, not walked. Its children are not
+    /// asked for: a focused web area would send thousands.
+    static let focus: [String] = Array(walk.dropLast())
+    static let scrollBar: [String] = [kAXValueAttribute, kAXMinValueAttribute, kAXMaxValueAttribute]
+
+    static let role = 0
+    static let subrole = 1
+    static let position = 2
+    static let size = 3
+    static let editable = 4
+    static let enabled = 5
+    static let verticalBar = 6
+    static let horizontalBar = 7
+    static let children = 8
+}
+
+private struct LiveNodeSource: AccessibilityNodeSource {
+    let slowMilliseconds: Double
+
+    func read(_ node: LiveNode) -> NodeReadResult<LiveNode> {
+        readLiveNode(node.element, attributes: LiveAttributes.walk, slowMilliseconds: slowMilliseconds)
+    }
+}
+
+/// One node in one round trip, plus one for its action names when the role
+/// can be clicked, plus one per scroll bar it has.
+///
+/// `cannotComplete` after a wait close to the messaging timeout means the
+/// app is not answering. The same error straight away means this one
+/// element could not be reached, and only it is left out. Any other
+/// failure of the batched call falls back to asking attribute by attribute.
+private func readLiveNode(
+    _ element: AXUIElement,
+    attributes: [String],
+    slowMilliseconds: Double
+) -> NodeReadResult<LiveNode> {
+    let watch = TraceStopwatch()
+    var copied: CFArray?
+    let error = AXUIElementCopyMultipleAttributeValues(
+        element,
+        attributes as CFArray,
+        AXCopyMultipleAttributeOptions(rawValue: 0),
+        &copied
+    )
+    switch error {
+    case .success:
+        break
+    case .invalidUIElement:
+        return .gone
+    case .cannotComplete:
+        return watch.milliseconds >= slowMilliseconds ? .unresponsive : .gone
+    default:
+        return .node(NodeReading(
+            element: attributeByAttribute(element),
+            children: attributes.count > LiveAttributes.children
+                ? copyChildren(element).map { LiveNode(element: $0) }
+                : []
+        ))
+    }
+    let values = (copied as? [AnyObject]) ?? []
+    func value(_ index: Int) -> AnyObject? {
+        guard values.indices.contains(index) else {
+            return nil
+        }
+        let raw = values[index]
+        if CFGetTypeID(raw) == AXValueGetTypeID(),
+           AXValueGetType(unsafeDowncast(raw, to: AXValue.self)) == .axError {
+            return nil
+        }
+        return raw
+    }
+    let role = value(LiveAttributes.role) as? String
+    var frame: ElementFrame?
+    if let position = value(LiveAttributes.position).flatMap({ copyPoint($0) }),
+       let size = value(LiveAttributes.size).flatMap({ copySize($0) }) {
+        frame = ElementFrame(
+            x: Double(position.x),
+            y: Double(position.y),
+            width: Double(size.width),
+            height: Double(size.height)
+        )
+    }
+    let copiedElement = AccessibilityElement(
+        role: role,
+        subrole: value(LiveAttributes.subrole) as? String,
+        actions: FocusClassification.wantsActionNames(role: role) ? copyActions(element) : [],
+        editableAttribute: value(LiveAttributes.editable).flatMap { booleanValue($0) },
+        frame: frame,
+        verticalScroll: value(LiveAttributes.verticalBar).flatMap { readScrollBar($0) },
+        horizontalScroll: value(LiveAttributes.horizontalBar).flatMap { readScrollBar($0) },
+        isEnabled: value(LiveAttributes.enabled).flatMap { booleanValue($0) }
+    )
+    let children = (value(LiveAttributes.children) as? [AXUIElement]) ?? []
+    return .node(NodeReading(element: copiedElement, children: children.map { LiveNode(element: $0) }))
+}
+
+private func booleanValue(_ value: AnyObject) -> Bool? {
+    guard CFGetTypeID(value) == CFBooleanGetTypeID() else {
+        return nil
+    }
+    return (value as? NSNumber)?.boolValue
+}
+
+/// Value, minimum and maximum of one scroll bar in one round trip.
+private func readScrollBar(_ value: AnyObject) -> ScrollBarReading? {
+    guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+        return nil
+    }
+    let bar = unsafeBitCast(value, to: AXUIElement.self)
+    var copied: CFArray?
+    let error = AXUIElementCopyMultipleAttributeValues(
+        bar,
+        LiveAttributes.scrollBar as CFArray,
+        AXCopyMultipleAttributeOptions(rawValue: 0),
+        &copied
+    )
+    guard error == .success, let numbers = copied as? [AnyObject], numbers.count == 3 else {
+        return nil
+    }
+    guard let current = (numbers[0] as? NSNumber)?.doubleValue,
+          let minimum = (numbers[1] as? NSNumber)?.doubleValue,
+          let maximum = (numbers[2] as? NSNumber)?.doubleValue
+    else {
+        return nil
+    }
+    return ScrollBarReading(value: current, minimum: minimum, maximum: maximum, contentLength: nil)
+}
+
+/// The reading used before the batched call, kept for an element that
+/// refuses the batched call.
+private func attributeByAttribute(_ element: AXUIElement) -> AccessibilityElement {
+    let role = copyString(element, kAXRoleAttribute)
+    return AccessibilityElement(
+        role: role,
+        subrole: copyString(element, kAXSubroleAttribute),
+        actions: copyActions(element),
+        editableAttribute: copyBool(element, "AXEditable" as CFString),
+        frame: copyFrame(element),
+        verticalScroll: copyScrollBar(element, kAXVerticalScrollBarAttribute),
+        horizontalScroll: copyScrollBar(element, kAXHorizontalScrollBarAttribute),
+        isEnabled: copyBool(element, kAXEnabledAttribute as CFString)
+    )
 }
 
 /// Observes focused-element changes and application activation.

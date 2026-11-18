@@ -125,6 +125,49 @@ public enum HintGeometry {
         return frame
     }
 
+    /// The part of `element` that its own containers leave visible.
+    ///
+    /// `ancestors` are the frames of the scroll and web areas the element is
+    /// inside, outermost first. A frame that cannot hold a point is skipped.
+    /// The element is cut by the window and then by each of them. An area
+    /// elsewhere in the window is not part of the chain and does not clip.
+    /// A huge box that only slivers into the innermost area is dropped.
+    public static func visibleElement(
+        _ element: HintRect,
+        window: HintRect?,
+        ancestors: [HintRect]
+    ) -> HintRect? {
+        guard element.isUsable else {
+            return nil
+        }
+        var frame = element
+        if let window {
+            guard window.isUsable, let hit = intersection(frame, window) else {
+                return nil
+            }
+            frame = hit
+        }
+        var innermost: HintRect?
+        for ancestor in ancestors where ancestor.isUsable {
+            guard let hit = intersection(frame, ancestor) else {
+                return nil
+            }
+            frame = hit
+            innermost = ancestor
+        }
+        if let innermost {
+            let mostlyOutside = area(element) > area(frame) * 4
+            let sliver = area(frame) < max(64, area(innermost) * 0.05)
+            if mostlyOutside && sliver {
+                return nil
+            }
+        }
+        guard usablePiece(frame, original: element) else {
+            return nil
+        }
+        return frame
+    }
+
     /// Label, click, and the screen that contains the click.
     /// The click is the center of the clipped frame. Scale is not applied.
     public static func place(

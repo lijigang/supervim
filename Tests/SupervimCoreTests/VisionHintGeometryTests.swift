@@ -92,4 +92,36 @@ final class VisionHintGeometryTests: XCTestCase {
             visionBundles: ["com.tencent.xinWeChat"]
         ))
     }
+
+    /// Text recognition time grows with the pixel count. A Retina screenshot
+    /// of a large window is four times the pixels of the same window at 1x,
+    /// and the text in it is far larger than recognition needs.
+    func testCaptureScaleCapsTheLongSideAndNeverGoesBelowOnePixelPerPoint() {
+        // A small window is captured at the screen's own scale.
+        XCTAssertEqual(VisionCaptureSizing.scale(width: 900, height: 700, backingScale: 2), 2)
+        // 1440 x 900 at 2x would be 2880 wide. The long side is capped.
+        let large = VisionCaptureSizing.scale(width: 1440, height: 900, backingScale: 2)
+        XCTAssertEqual(large * 1440, VisionCaptureSizing.maximumLongSide, accuracy: 0.001)
+        XCTAssertLessThan(large, 2)
+        XCTAssertGreaterThan(large, 1)
+        // A tall window is capped by its height.
+        let tall = VisionCaptureSizing.scale(width: 800, height: 1400, backingScale: 2)
+        XCTAssertEqual(tall * 1400, VisionCaptureSizing.maximumLongSide, accuracy: 0.001)
+        // A window wider than the cap is still captured at one pixel per point.
+        XCTAssertEqual(VisionCaptureSizing.scale(width: 3000, height: 1200, backingScale: 2), 1)
+        XCTAssertEqual(VisionCaptureSizing.scale(width: 3000, height: 1200, backingScale: 1), 1)
+        // Nonsense in, the screen's scale out.
+        XCTAssertEqual(VisionCaptureSizing.scale(width: 0, height: 0, backingScale: 2), 2)
+        XCTAssertEqual(VisionCaptureSizing.scale(width: 900, height: 700, backingScale: 0), 1)
+        XCTAssertEqual(VisionCaptureSizing.scale(width: .nan, height: 700, backingScale: 2), 2)
+
+        let pixels = VisionCaptureSizing.pixelSize(width: 1440, height: 900, backingScale: 2)
+        XCTAssertEqual(pixels.width, Int(VisionCaptureSizing.maximumLongSide))
+        XCTAssertEqual(pixels.height, 1375)
+        XCTAssertLessThan(
+            Double(pixels.width * pixels.height),
+            Double(2880 * 1800) * 0.6,
+            "the capped capture has well under two thirds of the pixels"
+        )
+    }
 }

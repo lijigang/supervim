@@ -59,8 +59,135 @@ func chromeDraw(
     attributed.draw(in: rect)
 }
 
-/// One hint label. The frame includes padding and a shadow margin.
-/// Placement code positions this frame and does not move the text inside it.
+/// Draws hint labels. One painter is made per drawing pass: it resolves the
+/// colors, the font and the accessibility settings once, and then draws any
+/// number of labels with them.
+///
+/// A label is a near-opaque gray pill with a hairline edge and a soft
+/// shadow, the green cursor block on the left, and SF Mono Semibold 12.
+/// Characters already typed turn green. They keep the same font, so a label
+/// does not change width while it is being typed.
+@MainActor
+struct HintBadgePainter {
+    var dark: Bool
+    var contrast: Bool
+    var differentiate: Bool
+    var opaque: Bool
+
+    private let font: NSFont
+    private let fill: NSColor
+    private let stroke: NSColor
+    private let cursor: NSColor
+    private let shadow: NSShadow
+    private let clearShadow = NSShadow()
+    private let matched: [NSAttributedString.Key: Any]
+    private let remainder: [NSAttributedString.Key: Any]
+
+    static let font = ChromeFont.mono(12, weight: .semibold)
+
+    init(
+        appearance: NSAppearance,
+        contrast: Bool? = nil,
+        differentiate: Bool? = nil,
+        reduceTransparency: Bool? = nil
+    ) {
+        let workspace = NSWorkspace.shared
+        let dark = ChromeAppearance.isDark(appearance)
+        let contrast = contrast ?? workspace.accessibilityDisplayShouldIncreaseContrast
+        let differentiate = differentiate ?? workspace.accessibilityDisplayShouldDifferentiateWithoutColor
+        let opaque = contrast || (reduceTransparency ?? workspace.accessibilityDisplayShouldReduceTransparency)
+        let font = Self.font
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.45 : 0.24)
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowBlurRadius = contrast ? 0 : 3
+        var matched: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: ChromeNSColor.color(dark ? ChromePalette.darkMatched : ChromePalette.lightMatched),
+        ]
+        if differentiate {
+            matched[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        self.dark = dark
+        self.contrast = contrast
+        self.differentiate = differentiate
+        self.opaque = opaque
+        self.font = font
+        self.fill = ChromeNSColor.color(
+            dark ? ChromePalette.darkFill : ChromePalette.lightFill,
+            alpha: opaque ? 1 : CGFloat(dark ? ChromePalette.darkFillAlpha : ChromePalette.lightFillAlpha)
+        )
+        self.stroke = ChromeNSColor.color(
+            dark ? ChromePalette.darkStroke : ChromePalette.lightStroke,
+            alpha: contrast ? 0.9 : CGFloat(dark ? ChromePalette.darkHairlineAlpha : ChromePalette.lightHairlineAlpha)
+        )
+        self.cursor = ChromeNSColor.color(ChromePalette.iconGreen)
+        self.shadow = shadow
+        self.matched = matched
+        self.remainder = [
+            .font: font,
+            .foregroundColor: ChromeNSColor.color(dark ? ChromePalette.darkText : ChromePalette.lightText),
+        ]
+    }
+
+    /// Outer size of a label, shadow margin included.
+    static func size(for label: String) -> NSSize {
+        let width = (label as NSString).size(withAttributes: [.font: font]).width
+        let size = HintBadgeMetrics.size(
+            textWidth: Double(width),
+            textHeight: Double(font.ascender - font.descender)
+        )
+        return NSSize(width: size.width, height: size.height)
+    }
+
+    func draw(label: String, typedPrefix: String, in frame: NSRect) {
+        let margin = CGFloat(HintBadgeMetrics.shadowMargin)
+        let pill = frame.insetBy(dx: margin, dy: margin)
+        let radius = CGFloat(HintBadgeMetrics.cornerRadius)
+        let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)
+
+        shadow.set()
+        fill.setFill()
+        path.fill()
+        clearShadow.set()
+
+        let line: CGFloat = contrast ? 1.5 : 1
+        let edge = NSBezierPath(
+            roundedRect: pill.insetBy(dx: line / 2, dy: line / 2),
+            xRadius: radius - line / 2,
+            yRadius: radius - line / 2
+        )
+        edge.lineWidth = line
+        stroke.setStroke()
+        edge.stroke()
+
+        let cursorHeight = min(CGFloat(HintBadgeMetrics.cursorHeight), pill.height - 6)
+        let cursorWidth = CGFloat(HintBadgeMetrics.cursorWidth)
+        let bar = NSRect(
+            x: pill.minX + CGFloat(HintBadgeMetrics.textPaddingX),
+            y: pill.midY - cursorHeight / 2,
+            width: cursorWidth,
+            height: cursorHeight
+        )
+        cursor.setFill()
+        NSBezierPath(roundedRect: bar, xRadius: cursorWidth / 2, yRadius: cursorWidth / 2).fill()
+
+        let split = HintLabelHighlight.split(label: label, typedPrefix: typedPrefix)
+        var textX = bar.maxX + CGFloat(HintBadgeMetrics.cursorGap)
+        let baseline = pill.midY - (font.ascender + font.descender) / 2
+        if !split.matched.isEmpty {
+            let text = split.matched as NSString
+            text.draw(at: NSPoint(x: textX, y: baseline), withAttributes: matched)
+            textX += text.size(withAttributes: matched).width
+        }
+        if !split.remainder.isEmpty {
+            (split.remainder as NSString).draw(at: NSPoint(x: textX, y: baseline), withAttributes: remainder)
+        }
+    }
+}
+
+/// One hint label as a view. The overlay draws its labels on one canvas;
+/// this view is the same drawing for the snapshot tool.
 @MainActor
 public final class HintBadgeView: NSView {
     public let label: String
@@ -84,88 +211,46 @@ public final class HintBadgeView: NSView {
     public override var isOpaque: Bool { false }
 
     public var badgeSize: NSSize {
-        let split = HintLabelHighlight.split(label: label, typedPrefix: typedPrefix)
-        let matchedFont = ChromeFont.mono(12, weight: .bold)
-        let remainderFont = ChromeFont.mono(12, weight: .medium)
-        let matchedWidth = (split.matched as NSString).size(withAttributes: [.font: matchedFont]).width
-        let remainderWidth = (split.remainder as NSString).size(withAttributes: [.font: remainderFont]).width
-        let textHeight = matchedFont.ascender - matchedFont.descender
-        let size = HintBadgeMetrics.size(
-            textWidth: Double(matchedWidth + remainderWidth),
-            textHeight: Double(textHeight)
-        )
-        return NSSize(width: size.width, height: size.height)
+        HintBadgePainter.size(for: label)
     }
 
     public override func draw(_ dirtyRect: NSRect) {
-        let dark = ChromeAppearance.isDark(effectiveAppearance)
-        let contrast = forcesIncreaseContrast ?? NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        let differentiate = forcesDifferentiateWithoutColor
-            ?? NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
-        let reduceTransparency = forcesReduceTransparency
-            ?? NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-        let opaque = contrast || reduceTransparency
-        let fillSource = dark ? ChromePalette.darkFill : ChromePalette.lightFill
-        let fillAlpha = opaque ? 1 : CGFloat(dark ? ChromePalette.darkFillAlpha : ChromePalette.lightFillAlpha)
-        let textSource = dark ? ChromePalette.darkText : ChromePalette.lightText
-        let matchedSource = dark ? ChromePalette.darkMatched : ChromePalette.lightMatched
-        let strokeAlpha: CGFloat = contrast ? 0.9 : (dark ? 0.28 : 0.16)
-        let strokeSource = dark ? ChromePalette.darkStroke : ChromePalette.lightStroke
+        HintBadgePainter(
+            appearance: effectiveAppearance,
+            contrast: forcesIncreaseContrast,
+            differentiate: forcesDifferentiateWithoutColor,
+            reduceTransparency: forcesReduceTransparency
+        ).draw(label: label, typedPrefix: typedPrefix, in: bounds)
+    }
+}
 
-        let margin = CGFloat(HintBadgeMetrics.shadowMargin)
-        let pill = bounds.insetBy(dx: margin, dy: margin)
-        let radius = CGFloat(HintBadgeMetrics.cornerRadius)
-        let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)
+/// Every hint label on one screen, drawn by one view. A keystroke replaces
+/// the list and redraws; no view is created or removed.
+@MainActor
+final class HintCanvasView: NSView {
+    struct Badge {
+        var label: String
+        var frame: NSRect
+    }
 
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(contrast ? 0.28 : 0.22)
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
-        shadow.shadowBlurRadius = contrast ? 0 : 2.5
-        shadow.set()
-        ChromeNSColor.color(fillSource, alpha: fillAlpha).setFill()
-        path.fill()
-        NSShadow().set()
+    private var badges: [Badge] = []
+    private var typedPrefix = ""
 
-        ChromeNSColor.color(strokeSource, alpha: strokeAlpha).setStroke()
-        path.lineWidth = contrast ? 1.5 : 1
-        path.stroke()
+    override var isOpaque: Bool { false }
 
-        let cursorHeight = min(12, pill.height - 6)
-        let cursor = NSRect(
-            x: pill.minX + CGFloat(HintBadgeMetrics.textPaddingX),
-            y: pill.midY - cursorHeight / 2,
-            width: CGFloat(HintBadgeMetrics.cursorWidth),
-            height: cursorHeight
-        )
-        ChromeNSColor.color(ChromePalette.iconGreen).setFill()
-        NSBezierPath(roundedRect: cursor, xRadius: 1, yRadius: 1).fill()
+    func replace(_ badges: [Badge], typedPrefix: String) {
+        self.badges = badges
+        self.typedPrefix = typedPrefix
+        needsDisplay = true
+    }
 
-        let split = HintLabelHighlight.split(label: label, typedPrefix: typedPrefix)
-        let matchedFont = ChromeFont.mono(12, weight: .bold)
-        let remainderFont = ChromeFont.mono(12, weight: .medium)
-        let matchedWidth = (split.matched as NSString).size(withAttributes: [.font: matchedFont]).width
-        let textX = cursor.maxX + CGFloat(HintBadgeMetrics.cursorGap)
-        let baseline = pill.midY - (matchedFont.ascender + matchedFont.descender) / 2
-        if !split.matched.isEmpty {
-            var attributes: [NSAttributedString.Key: Any] = [
-                .font: matchedFont,
-                .foregroundColor: ChromeNSColor.color(matchedSource),
-            ]
-            if differentiate {
-                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            }
-            NSAttributedString(string: split.matched, attributes: attributes).draw(
-                at: NSPoint(x: textX, y: baseline)
-            )
+    override func draw(_ dirtyRect: NSRect) {
+        guard !badges.isEmpty else {
+            return
         }
-        if !split.remainder.isEmpty {
-            NSAttributedString(
-                string: split.remainder,
-                attributes: [
-                    .font: remainderFont,
-                    .foregroundColor: ChromeNSColor.color(textSource),
-                ]
-            ).draw(at: NSPoint(x: textX + matchedWidth, y: baseline))
+        let painter = HintBadgePainter(appearance: effectiveAppearance)
+        for badge in badges where badge.frame.intersects(dirtyRect) {
+            painter.draw(label: badge.label, typedPrefix: typedPrefix, in: badge.frame)
         }
     }
 }
@@ -198,6 +283,7 @@ public final class IconMarkView: NSView {
 /// stays in the icon palette on a desktop, and stays readable in a snapshot.
 @MainActor
 public final class HelpSheetView: NSView {
+    static let cornerRadius: CGFloat = 16
     public let sheetLayout: HelpSheetLayout
     private let effect = NSVisualEffectView()
     private let canvas: HelpCanvas
@@ -213,7 +299,7 @@ public final class HelpSheetView: NSView {
         effect.frame = bounds
         effect.autoresizingMask = [.width, .height]
         effect.wantsLayer = true
-        effect.layer?.cornerRadius = 14
+        effect.layer?.cornerRadius = Self.cornerRadius
         effect.layer?.masksToBounds = true
         canvas.frame = bounds
         canvas.autoresizingMask = [.width, .height]
@@ -234,7 +320,7 @@ public final class HelpSheetView: NSView {
         let dark = ChromeAppearance.isDark(effectiveAppearance)
         let fill = dark ? ChromePalette.darkFill : ChromePalette.lightFill
         ChromeNSColor.color(fill, alpha: 0.94).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 14, yRadius: 14).fill()
+        NSBezierPath(roundedRect: bounds, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius).fill()
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -246,7 +332,7 @@ public final class HelpSheetView: NSView {
         let flat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
             || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         effect.isHidden = flat
-        effect.layer?.cornerRadius = 14
+        effect.layer?.cornerRadius = Self.cornerRadius
         effect.layer?.masksToBounds = true
         canvas.needsDisplay = true
     }
@@ -272,137 +358,217 @@ private final class HelpCanvas: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let dark = ChromeAppearance.isDark(effectiveAppearance)
         let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        let text = ChromeNSColor.color(dark ? ChromePalette.darkText : ChromePalette.lightText)
-        let secondary = ChromeNSColor.color(dark ? ChromePalette.darkSecondary : ChromePalette.lightSecondary)
-        let stroke = ChromeNSColor.color(
-            dark ? ChromePalette.darkStroke : ChromePalette.lightStroke,
-            alpha: contrast ? 0.9 : (dark ? 0.24 : 0.14)
+        let palette = HelpPalette(dark: dark, contrast: contrast)
+        let fonts = HelpFonts()
+
+        let margin = CGFloat(HelpMetrics.margin)
+        let markSide: CGFloat = 20
+        let mark = NSRect(x: margin, y: margin + 1, width: markSide, height: markSide)
+        IconMarkDrawing.draw(in: mark, flipped: true)
+        chromeDraw(
+            "Shortcuts",
+            in: NSRect(x: mark.maxX + 9, y: margin, width: 220, height: 22),
+            font: fonts.title,
+            color: palette.text
         )
-        let capFill = ChromeNSColor.color(dark ? ChromePalette.darkKeyCap : ChromePalette.lightKeyCap)
+        drawCloseHint(palette: palette, fonts: fonts)
 
-        let titleFont = ChromeFont.rounded(18, weight: .semibold)
-        let subtitleFont = ChromeFont.system(12, weight: .regular)
-        let headerFont = ChromeFont.rounded(11, weight: .semibold)
-        let summaryFont = ChromeFont.system(13, weight: .medium)
-        let noteFont = ChromeFont.system(11, weight: .regular)
-        let capFont = ChromeFont.mono(12, weight: .semibold)
-
-        let titleRect = NSRect(x: HelpMetrics.margin, y: HelpMetrics.margin, width: 220, height: 22)
-        chromeDraw("Shortcuts", in: titleRect, font: titleFont, color: text)
-        let subtitleRect = NSRect(
-            x: bounds.width - HelpMetrics.margin - 220,
-            y: HelpMetrics.margin + 4,
-            width: 220,
-            height: 16
-        )
-        chromeDraw("? or Esc to close", in: subtitleRect, font: subtitleFont, color: secondary, alignment: .right)
-
-        let ruleY = HelpMetrics.margin + HelpMetrics.titleBlock - 2
-        stroke.setStroke()
+        let ruleY = margin + CGFloat(HelpMetrics.titleBlock) - 2
+        palette.rule.setStroke()
         let rule = NSBezierPath()
-        rule.move(to: NSPoint(x: HelpMetrics.margin, y: ruleY))
-        rule.line(to: NSPoint(x: bounds.width - HelpMetrics.margin, y: ruleY))
+        rule.move(to: NSPoint(x: margin, y: ruleY))
+        rule.line(to: NSPoint(x: bounds.width - margin, y: ruleY))
         rule.lineWidth = contrast ? 1.5 : 1
         rule.stroke()
 
         for section in sheetLayout.sections {
-            chromeDraw(
-                section.title.uppercased(),
-                in: NSRect(x: section.header.x, y: section.header.y, width: section.header.width, height: section.header.height),
-                font: headerFont,
-                color: secondary
-            )
+            drawHeader(section, palette: palette, fonts: fonts)
+            // One key cap width per section, so its descriptions start on
+            // the same line and a wide key elsewhere does not push them out.
+            let keyColumn = section.rows
+                .map { capWidth($0.keys, font: fonts.cap, limit: CGFloat($0.frame.width) * 0.46) }
+                .max() ?? 26
             for row in section.rows {
-                drawRow(
-                    row,
-                    capFont: capFont,
-                    summaryFont: summaryFont,
-                    noteFont: noteFont,
-                    text: text,
-                    secondary: secondary,
-                    capFill: capFill,
-                    stroke: stroke,
-                    contrast: contrast
-                )
+                drawRow(row, keyColumn: keyColumn, palette: palette, fonts: fonts, contrast: contrast)
             }
         }
 
-        let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 14, yRadius: 14)
+        let border = NSBezierPath(
+            roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+            xRadius: HelpSheetView.cornerRadius,
+            yRadius: HelpSheetView.cornerRadius
+        )
         border.lineWidth = contrast ? 1.5 : 1
-        stroke.setStroke()
+        palette.stroke.setStroke()
         border.stroke()
+    }
+
+    private func capWidth(_ keys: String, font: NSFont, limit: CGFloat) -> CGFloat {
+        let textWidth = ceil((keys as NSString).size(withAttributes: [.font: font]).width)
+        return min(max(textWidth + 14, 26), limit)
+    }
+
+    /// "?" and "esc" as key caps at the right of the title, then "to close".
+    private func drawCloseHint(palette: HelpPalette, fonts: HelpFonts) {
+        let margin = CGFloat(HelpMetrics.margin)
+        let label = "to close"
+        let labelWidth = ceil((label as NSString).size(withAttributes: [.font: fonts.note]).width)
+        var x = bounds.width - margin - labelWidth
+        let midY = margin + 11
+        chromeDraw(
+            label,
+            in: NSRect(x: x, y: midY - 7, width: labelWidth + 2, height: 14),
+            font: fonts.note,
+            color: palette.secondary
+        )
+        for keys in ["esc", "?"] {
+            let width = capWidth(keys, font: fonts.smallCap, limit: 60)
+            x -= width + 6
+            drawCap(
+                keys,
+                in: NSRect(x: x, y: midY - 9, width: width, height: 18),
+                font: fonts.smallCap,
+                palette: palette,
+                contrast: false
+            )
+        }
+    }
+
+    /// The green cursor block, then the section name in small capitals.
+    private func drawHeader(_ section: HelpPlacedSection, palette: HelpPalette, fonts: HelpFonts) {
+        let header = section.header
+        let bar = NSRect(x: header.x, y: header.y + (header.height - 9) / 2, width: 2.5, height: 9)
+        palette.accent.setFill()
+        NSBezierPath(roundedRect: bar, xRadius: 1.25, yRadius: 1.25).fill()
+        let title = NSAttributedString(
+            string: section.title.uppercased(),
+            attributes: [
+                .font: fonts.header,
+                .foregroundColor: palette.secondary,
+                .kern: 0.7,
+            ]
+        )
+        title.draw(in: NSRect(x: header.x + 8, y: header.y + 1, width: header.width - 8, height: header.height))
+    }
+
+    private func drawCap(
+        _ keys: String,
+        in rect: NSRect,
+        font: NSFont,
+        palette: HelpPalette,
+        contrast: Bool
+    ) {
+        // The lip under the cap is what makes it read as a key.
+        let lip = NSBezierPath(roundedRect: rect.offsetBy(dx: 0, dy: 1), xRadius: 5, yRadius: 5)
+        palette.capLip.setFill()
+        lip.fill()
+        let cap = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
+        palette.capFill.setFill()
+        cap.fill()
+        let edge = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.5, yRadius: 4.5)
+        edge.lineWidth = contrast ? 1.25 : 1
+        palette.stroke.setStroke()
+        edge.stroke()
+        let lineHeight = ceil(font.ascender - font.descender)
+        chromeDraw(
+            keys,
+            in: NSRect(x: rect.minX + 2, y: rect.midY - lineHeight / 2, width: rect.width - 4, height: lineHeight),
+            font: font,
+            color: palette.text,
+            alignment: .center
+        )
     }
 
     private func drawRow(
         _ row: HelpPlacedRow,
-        capFont: NSFont,
-        summaryFont: NSFont,
-        noteFont: NSFont,
-        text: NSColor,
-        secondary: NSColor,
-        capFill: NSColor,
-        stroke: NSColor,
+        keyColumn: CGFloat,
+        palette: HelpPalette,
+        fonts: HelpFonts,
         contrast: Bool
     ) {
-        let textWidth = ceil((row.keys as NSString).size(withAttributes: [.font: capFont]).width)
-        let capWidth = min(max(textWidth + 12, 22), row.frame.width * 0.46)
-        let capHeight: CGFloat = 18
+        let capHeight: CGFloat = 20
         let capRect = NSRect(
             x: row.frame.x,
             y: row.frame.y + (row.frame.height - capHeight) / 2,
-            width: capWidth,
+            width: capWidth(row.keys, font: fonts.cap, limit: CGFloat(row.frame.width) * 0.46),
             height: capHeight
         )
-        let cap = NSBezierPath(roundedRect: capRect, xRadius: 5, yRadius: 5)
-        capFill.setFill()
-        cap.fill()
-        stroke.setStroke()
-        cap.lineWidth = contrast ? 1.25 : 1
-        cap.stroke()
-        chromeDraw(
-            row.keys,
-            in: NSRect(x: capRect.minX + 2, y: capRect.midY - 7, width: capRect.width - 4, height: 14),
-            font: capFont,
-            color: text,
-            alignment: .center
-        )
-        let textX = capRect.maxX + 8
-        let textWidthAvailable = row.frame.maxX - textX
+        drawCap(row.keys, in: capRect, font: fonts.cap, palette: palette, contrast: contrast)
+        let textX = CGFloat(row.frame.x) + keyColumn + 10
+        let available = CGFloat(row.frame.maxX) - textX
         if row.note.isEmpty {
             chromeDraw(
                 row.summary,
-                in: NSRect(x: textX, y: row.frame.y + 3, width: textWidthAvailable, height: 18),
-                font: summaryFont,
-                color: text
+                in: NSRect(x: textX, y: row.frame.y + 3, width: available, height: 18),
+                font: fonts.summary,
+                color: palette.text
             )
         } else {
             chromeDraw(
                 row.summary,
-                in: NSRect(x: textX, y: row.frame.y + 2, width: textWidthAvailable, height: 16),
-                font: summaryFont,
-                color: text
+                in: NSRect(x: textX, y: row.frame.y + 2, width: available, height: 16),
+                font: fonts.summary,
+                color: palette.text
             )
             chromeDraw(
                 row.note,
-                in: NSRect(x: textX, y: row.frame.y + 18, width: textWidthAvailable, height: 14),
-                font: noteFont,
-                color: secondary
+                in: NSRect(x: textX, y: row.frame.y + 18, width: available, height: 14),
+                font: fonts.note,
+                color: palette.secondary
             )
         }
     }
 }
 
-/// The short "nothing to click" toast. Opaque enough to read on any window.
+@MainActor
+private struct HelpFonts {
+    let title = ChromeFont.rounded(17, weight: .semibold)
+    let header = ChromeFont.rounded(10.5, weight: .semibold)
+    let summary = ChromeFont.system(13, weight: .regular)
+    let note = ChromeFont.system(11, weight: .regular)
+    let cap = ChromeFont.mono(11.5, weight: .medium)
+    let smallCap = ChromeFont.mono(10.5, weight: .medium)
+}
+
+@MainActor
+private struct HelpPalette {
+    let text: NSColor
+    let secondary: NSColor
+    let stroke: NSColor
+    let rule: NSColor
+    let capFill: NSColor
+    let capLip: NSColor
+    let accent: NSColor
+
+    init(dark: Bool, contrast: Bool) {
+        let line = dark ? ChromePalette.darkStroke : ChromePalette.lightStroke
+        let hairline = CGFloat(dark ? ChromePalette.darkHairlineAlpha : ChromePalette.lightHairlineAlpha)
+        text = ChromeNSColor.color(dark ? ChromePalette.darkText : ChromePalette.lightText)
+        secondary = ChromeNSColor.color(dark ? ChromePalette.darkSecondary : ChromePalette.lightSecondary)
+        stroke = ChromeNSColor.color(line, alpha: contrast ? 0.9 : hairline)
+        rule = ChromeNSColor.color(line, alpha: contrast ? 0.9 : hairline * 0.55)
+        capFill = ChromeNSColor.color(dark ? ChromePalette.darkKeyCap : ChromePalette.lightKeyCap)
+        capLip = dark
+            ? NSColor.black.withAlphaComponent(0.45)
+            : ChromeNSColor.color(ChromePalette.lightStroke, alpha: 0.2)
+        accent = ChromeNSColor.color(ChromePalette.iconGreen)
+    }
+}
+
+/// The short "nothing to click" toast: a capsule in the label's own style,
+/// with the green cursor block before the text. Opaque enough to read on
+/// any window.
 @MainActor
 public final class BannerView: NSView {
     public let message: String
+    private static let font = ChromeFont.system(13, weight: .medium)
+    private static let inset: CGFloat = 6
 
     public init(message: String) {
         self.message = message
-        let font = ChromeFont.system(13, weight: .semibold)
-        let textWidth = ceil((message as NSString).size(withAttributes: [.font: font]).width)
-        let width = min(max(textWidth + 64, 220), 520)
-        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 44))
+        let textWidth = ceil((message as NSString).size(withAttributes: [.font: Self.font]).width)
+        let width = min(max(textWidth + 50 + Self.inset * 2, 180), 520)
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 34 + Self.inset * 2))
     }
 
     @available(*, unavailable)
@@ -421,29 +587,36 @@ public final class BannerView: NSView {
         let text = ChromeNSColor.color(dark ? ChromePalette.darkText : ChromePalette.lightText)
         let stroke = ChromeNSColor.color(
             dark ? ChromePalette.darkStroke : ChromePalette.lightStroke,
-            alpha: contrast ? 0.9 : (dark ? 0.28 : 0.16)
+            alpha: contrast ? 0.9 : CGFloat(dark ? ChromePalette.darkHairlineAlpha : ChromePalette.lightHairlineAlpha)
         )
-        let rect = bounds.insetBy(dx: 2, dy: 2)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
+        let rect = bounds.insetBy(dx: Self.inset, dy: Self.inset)
+        let radius = rect.height / 2
+        let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.24)
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
-        shadow.shadowBlurRadius = contrast ? 0 : 6
+        shadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.5 : 0.22)
+        shadow.shadowOffset = NSSize(width: 0, height: -2)
+        shadow.shadowBlurRadius = contrast ? 0 : 5
         shadow.set()
         ChromeNSColor.color(fill, alpha: alpha).setFill()
         path.fill()
         NSShadow().set()
+        let line: CGFloat = contrast ? 1.5 : 1
+        let edge = NSBezierPath(
+            roundedRect: rect.insetBy(dx: line / 2, dy: line / 2),
+            xRadius: radius - line / 2,
+            yRadius: radius - line / 2
+        )
+        edge.lineWidth = line
         stroke.setStroke()
-        path.lineWidth = contrast ? 1.5 : 1
-        path.stroke()
+        edge.stroke()
 
-        let mark = NSRect(x: 14, y: bounds.midY - 8, width: 16, height: 16)
-        IconMarkDrawing.draw(in: mark)
-        let font = ChromeFont.system(13, weight: .semibold)
+        let bar = NSRect(x: rect.minX + 16, y: rect.midY - 7, width: 3, height: 14)
+        ChromeNSColor.color(ChromePalette.iconGreen).setFill()
+        NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
         chromeDraw(
             message,
-            in: NSRect(x: 38, y: bounds.midY - 9, width: bounds.width - 52, height: 18),
-            font: font,
+            in: NSRect(x: bar.maxX + 9, y: rect.midY - 9, width: rect.maxX - bar.maxX - 25, height: 18),
+            font: Self.font,
             color: text
         )
     }
@@ -451,17 +624,25 @@ public final class BannerView: NSView {
 
 @MainActor
 enum IconMarkDrawing {
-    static func draw(in rect: NSRect) {
-        let path = NSBezierPath(roundedRect: rect, xRadius: rect.width * 0.22, yRadius: rect.width * 0.22)
+    /// `flipped` is true inside a view whose y axis runs down, so the
+    /// gradient still goes from light at the top to darker at the bottom.
+    static func draw(in rect: NSRect, flipped: Bool = false) {
+        let radius = rect.width * 0.24
+        let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
         NSGradient(colors: [
             ChromeNSColor.color(ChromePalette.iconGrayTop),
             ChromeNSColor.color(ChromePalette.iconGrayBottom),
-        ])?.draw(in: path, angle: -90)
-        ChromeNSColor.color(ChromePalette.lightStroke, alpha: 0.14).setStroke()
-        path.lineWidth = 1
-        path.stroke()
-        let cursorWidth = max(2, rect.width * 0.16)
-        let cursorHeight = rect.height * 0.46
+        ])?.draw(in: path, angle: flipped ? 90 : -90)
+        let edge = NSBezierPath(
+            roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
+            xRadius: radius - 0.5,
+            yRadius: radius - 0.5
+        )
+        ChromeNSColor.color(ChromePalette.lightStroke, alpha: 0.16).setStroke()
+        edge.lineWidth = 1
+        edge.stroke()
+        let cursorWidth = max(2, (rect.width * 0.15).rounded())
+        let cursorHeight = (rect.height * 0.46).rounded()
         let cursor = NSRect(
             x: rect.midX - cursorWidth / 2,
             y: rect.midY - cursorHeight / 2,
@@ -469,7 +650,7 @@ enum IconMarkDrawing {
             height: cursorHeight
         )
         ChromeNSColor.color(ChromePalette.iconGreen).setFill()
-        NSBezierPath(roundedRect: cursor, xRadius: 1, yRadius: 1).fill()
+        NSBezierPath(roundedRect: cursor, xRadius: cursorWidth / 2, yRadius: cursorWidth / 2).fill()
     }
 }
 
@@ -488,24 +669,30 @@ public enum MenuBarGlyphImage {
         return image
     }
 
+    /// Each glyph is built from the same rounded bar the app icon uses:
+    /// one block for Normal, a thin beam with serifs for Insert, two bars
+    /// for Paused, and a ring for anything else.
     public static func draw(_ kind: MenuBarGlyphKind, in rect: NSRect) {
+        func bar(_ frame: NSRect, radius: CGFloat) {
+            NSBezierPath(roundedRect: frame, xRadius: radius, yRadius: radius).fill()
+        }
         switch kind {
         case .normal:
-            let bar = NSRect(x: rect.midX - 2, y: rect.minY + 2, width: 4, height: rect.height - 4)
-            NSBezierPath(roundedRect: bar, xRadius: 1, yRadius: 1).fill()
+            bar(NSRect(x: rect.midX - 2.5, y: rect.minY + 2, width: 5, height: rect.height - 4), radius: 1.5)
         case .insert:
-            let stem = NSRect(x: rect.midX - 0.6, y: rect.minY + 3, width: 1.2, height: rect.height - 6)
-            stem.fill()
-            NSRect(x: rect.midX - 4, y: rect.maxY - 3.4, width: 8, height: 1.4).fill()
-            NSRect(x: rect.midX - 4, y: rect.minY + 2, width: 8, height: 1.4).fill()
+            bar(NSRect(x: rect.midX - 0.75, y: rect.minY + 2.5, width: 1.5, height: rect.height - 5), radius: 0.75)
+            bar(NSRect(x: rect.midX - 3.5, y: rect.maxY - 3.5, width: 7, height: 1.5), radius: 0.75)
+            bar(NSRect(x: rect.midX - 3.5, y: rect.minY + 2, width: 7, height: 1.5), radius: 0.75)
         case .paused:
             let height = rect.height - 5
             let y = rect.minY + 2.5
-            NSRect(x: rect.midX - 4.5, y: y, width: 3, height: height).fill()
-            NSRect(x: rect.midX + 1.5, y: y, width: 3, height: height).fill()
+            bar(NSRect(x: rect.midX - 4.5, y: y, width: 3, height: height), radius: 1)
+            bar(NSRect(x: rect.midX + 1.5, y: y, width: 3, height: height), radius: 1)
         case .other:
-            let dot = NSRect(x: rect.midX - 3, y: rect.midY - 3, width: 6, height: 6)
-            NSBezierPath(ovalIn: dot).fill()
+            let ring = NSBezierPath(ovalIn: NSRect(x: rect.midX - 5, y: rect.midY - 5, width: 10, height: 10))
+            ring.appendOval(in: NSRect(x: rect.midX - 3.25, y: rect.midY - 3.25, width: 6.5, height: 6.5))
+            ring.windingRule = .evenOdd
+            ring.fill()
         }
     }
 }
@@ -530,7 +717,7 @@ public final class TransientNoticePanel {
         let view = BannerView(message: message)
         let panel = ensurePanel()
         panel.contentView = view
-        panel.hasShadow = true
+        panel.hasShadow = false
         var frame = view.frame
         if let visible = FloatingScreen.underMouse()?.visibleFrame {
             let maxX = max(visible.minX + 12, visible.maxX - frame.width - 12)
@@ -562,7 +749,7 @@ public final class TransientNoticePanel {
         )
         created.isOpaque = false
         created.backgroundColor = .clear
-        created.hasShadow = true
+        created.hasShadow = false
         created.ignoresMouseEvents = true
         created.hidesOnDeactivate = false
         created.becomesKeyOnlyIfNeeded = false

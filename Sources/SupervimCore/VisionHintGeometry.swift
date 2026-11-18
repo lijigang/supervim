@@ -251,3 +251,30 @@ public enum VisionHintGeometry {
         return value.isFinite && value > 0 ? value : 0
     }
 }
+
+/// How large a window is captured for recognition.
+///
+/// The capture is at the screen's scale until its long side would pass
+/// `maximumLongSide` pixels. Past that it is scaled down, but never below
+/// one pixel per point: interface text at 1x is already near the smallest
+/// size that is read reliably.
+public enum VisionCaptureSizing {
+    public static let maximumLongSide = 2_200.0
+
+    public static func scale(width: Double, height: Double, backingScale: Double) -> Double {
+        let backing = backingScale.isFinite && backingScale >= 1 ? backingScale : 1
+        let long = max(width, height)
+        guard long.isFinite, long > 0 else {
+            return backing
+        }
+        return min(backing, max(1, maximumLongSide / long))
+    }
+
+    public static func pixelSize(width: Double, height: Double, backingScale: Double) -> (width: Int, height: Int) {
+        let factor = scale(width: width, height: height, backingScale: backingScale)
+        guard width.isFinite, height.isFinite else {
+            return (1, 1)
+        }
+        return (max(1, Int((width * factor).rounded())), max(1, Int((height * factor).rounded())))
+    }
+}

@@ -74,6 +74,10 @@ public enum ChromePalette {
     /// Near-opaque so a label stays readable on white, black, or a saturated page.
     public static let lightFillAlpha = 0.97
     public static let darkFillAlpha = 0.96
+    /// Opacity of the one-point edge around a label, a key cap and a sheet.
+    /// Enough to hold the shape on a page of the same gray, and no more.
+    public static let lightHairlineAlpha = 0.22
+    public static let darkHairlineAlpha = 0.22
     public static let minimumTextContrast = 4.5
 
     public static let backdrops: [ChromeColor] = [
@@ -106,9 +110,16 @@ public enum ChromePalette {
 /// How long a hint sheet, help sheet, or banner takes to fade in.
 public enum ChromeMotion {
     public static let appearDuration = 0.14
+    /// Hint labels answer a key press, so their fade is much shorter than
+    /// the help sheet's. It only takes the edge off the labels appearing.
+    public static let hintAppearDuration = 0.05
 
     public static func appearDuration(reduceMotion: Bool) -> Double {
         reduceMotion ? 0 : appearDuration
+    }
+
+    public static func hintAppearDuration(reduceMotion: Bool) -> Double {
+        reduceMotion ? 0 : hintAppearDuration
     }
 }
 
@@ -158,13 +169,14 @@ public struct HintBadgeSize: Equatable, Sendable {
 /// Padding inside a hint label. The outer size is what placement receives.
 /// `HintGeometry` is not involved; it still positions this rectangle.
 public enum HintBadgeMetrics {
-    public static let cursorWidth = 3.0
-    public static let cursorGap = 5.0
-    public static let textPaddingX = 7.0
-    public static let textPaddingY = 3.0
+    public static let cursorWidth = 2.5
+    public static let cursorHeight = 11.0
+    public static let cursorGap = 4.0
+    public static let textPaddingX = 5.0
+    public static let textPaddingY = 2.5
     public static let shadowMargin = 4.0
     public static let minimumHeight = 22.0
-    public static let cornerRadius = 6.0
+    public static let cornerRadius = 5.0
 
     public static func size(textWidth: Double, textHeight: Double) -> HintBadgeSize {
         let innerWidth = textPaddingX + cursorWidth + cursorGap + max(textWidth, 0) + textPaddingX

@@ -37,11 +37,15 @@ final class NormalCommandSessionTests: XCTestCase {
         let performance = fixture.session.handleKeyDown(KeyEvent("k"))
         XCTAssertEqual(performance.mode, .normal)
         XCTAssertEqual(performance.delivery, .swallow)
+        // The pointer is over the composer. A wheel goes to what is under
+        // the pointer, so the pointer is put on the history first.
+        XCTAssertEqual(fixture.poster.effects.first, .pointerMove(to: ActuatorPoint(x: 400, y: 250)))
         guard case .pointerScroll(let target, _, _, let location, let horizontal, let vertical) =
-            fixture.poster.effects.first
+            fixture.poster.effects.last
         else {
             return XCTFail("expected a wheel event, got \(fixture.poster.effects)")
         }
+        XCTAssertEqual(fixture.poster.effects.count, 2)
         XCTAssertEqual(target, "history")
         XCTAssertEqual(location, ActuatorPoint(x: 400, y: 250))
         XCTAssertEqual(horizontal, 0)
@@ -100,7 +104,8 @@ final class NormalCommandSessionTests: XCTestCase {
             return XCTFail("expected a wheel event, got \(fixture.poster.effects)")
         }
         XCTAssertEqual(target, "page")
-        XCTAssertEqual(location, ActuatorPoint(x: 200, y: 150))
+        // The pointer is already on the page.
+        XCTAssertEqual(location, ActuatorPoint(x: 12, y: 16))
         XCTAssertGreaterThan(vertical, 0)
     }
 
@@ -133,7 +138,7 @@ final class NormalCommandSessionTests: XCTestCase {
         }
     }
 
-    func testGGOnAWebPageWheelsThePageCenter() {
+    func testGGOnAWebPageWheelsThePageUnderThePointer() {
         var page = pageArea()
         page.role = "AXWebArea"
         let fixture = makeSession(bundle: "com.apple.Safari", areas: [page])
@@ -149,7 +154,7 @@ final class NormalCommandSessionTests: XCTestCase {
             return XCTFail("expected a wheel at the page center, got \(fixture.poster.effects)")
         }
         XCTAssertEqual(target, "page")
-        XCTAssertEqual(location, ActuatorPoint(x: 100, y: 100))
+        XCTAssertEqual(location, pagePointer)
         XCTAssertEqual(horizontal, 0)
         XCTAssertGreaterThan(vertical, 1000)
     }
@@ -167,7 +172,7 @@ final class NormalCommandSessionTests: XCTestCase {
             return XCTFail("expected a wheel at the page center, got \(fixture.poster.effects)")
         }
         XCTAssertEqual(target, "page")
-        XCTAssertEqual(location, ActuatorPoint(x: 100, y: 100))
+        XCTAssertEqual(location, pagePointer)
         XCTAssertLessThan(vertical, -1000)
     }
 
@@ -201,7 +206,8 @@ final class NormalCommandSessionTests: XCTestCase {
         let performance = fixture.session.handleKeyDown(KeyEvent("g"))
         XCTAssertEqual(performance.mode, .normal)
         XCTAssertEqual(performance.delivery, .swallow)
-        guard case .pointerScroll(let target, _, _, let location, _, let vertical) = fixture.poster.effects.first else {
+        XCTAssertEqual(fixture.poster.effects.first, .pointerMove(to: ActuatorPoint(x: 400, y: 250)))
+        guard case .pointerScroll(let target, _, _, let location, _, let vertical) = fixture.poster.effects.last else {
             return XCTFail("expected a wheel at the history center, got \(fixture.poster.effects)")
         }
         XCTAssertEqual(target, "history")
@@ -236,24 +242,44 @@ final class NormalCommandSessionTests: XCTestCase {
         XCTAssertEqual(fixture.reader.windowReads, 0)
     }
 
-    func testAReadyCatalogWithNoAreaPassesTheScrollKey() {
+    func testAReadyCatalogWithNoAreaWheelsAtThePointer() {
         let fixture = makeSession(bundle: "com.apple.Safari", areas: [], ready: true)
         let performance = fixture.session.handleKeyDown(KeyEvent("j"))
-        XCTAssertEqual(performance.delivery, .passThrough)
-        XCTAssertEqual(performance.outcomes, [.passedThrough])
-        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(fixture.poster.effects, [
+            .pointerScroll(
+                targetID: "window",
+                direction: .down,
+                amount: .points(60),
+                location: pagePointer,
+                horizontal: 0,
+                vertical: -60
+            ),
+        ])
         XCTAssertEqual(fixture.reader.windowReads, 0)
     }
 
-    func testAnUnreadyCatalogDoesNotScrollAStaleArea() {
-        let fixture = makeSession(bundle: "com.apple.Safari", areas: [pageArea()], ready: false)
+    func testAScrollWithNoPointerAndNoWindowPassesTheKey() {
+        let fixture = makeSession(bundle: "com.apple.Safari", areas: [], ready: true, pointer: nil)
         let performance = fixture.session.handleKeyDown(KeyEvent("j"))
         XCTAssertEqual(performance.delivery, .passThrough)
         XCTAssertEqual(performance.outcomes, [.passedThrough])
         XCTAssertTrue(fixture.poster.effects.isEmpty)
     }
 
-    func testAStalePointerFlagDoesNotScroll() {
+    func testAnUnreadyCatalogDoesNotNameAStaleArea() {
+        let fixture = makeSession(bundle: "com.apple.Safari", areas: [pageArea()], ready: false)
+        let performance = fixture.session.handleKeyDown(KeyEvent("j"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        guard case .pointerScroll(let target, _, _, let location, _, _) = fixture.poster.effects.first else {
+            return XCTFail("expected a wheel at the pointer, got \(fixture.poster.effects)")
+        }
+        XCTAssertEqual(target, "window")
+        XCTAssertEqual(location, pagePointer)
+        XCTAssertEqual(fixture.poster.effects.count, 1)
+    }
+
+    func testAStalePointerFlagDoesNotMoveThePointer() {
         var stale = pageArea()
         stale.containsPointer = true
         stale.isFocusContainer = true
@@ -265,9 +291,17 @@ final class NormalCommandSessionTests: XCTestCase {
             pointer: ActuatorPoint(x: 400, y: 400)
         )
         let performance = fixture.session.handleKeyDown(KeyEvent("j"))
-        XCTAssertEqual(performance.delivery, .passThrough)
-        XCTAssertEqual(performance.outcomes, [.passedThrough])
-        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(fixture.poster.effects, [
+            .pointerScroll(
+                targetID: "window",
+                direction: .down,
+                amount: .points(60),
+                location: ActuatorPoint(x: 400, y: 400),
+                horizontal: 0,
+                vertical: -60
+            ),
+        ])
     }
 
     func testFocusPointScrollsWhenThePointerIsMissing() {
@@ -278,18 +312,19 @@ final class NormalCommandSessionTests: XCTestCase {
             pointer: nil
         )
         let performance = fixture.session.handleKeyDown(KeyEvent("k"))
-        let expected = direct(
-            CommandMap().action(for: .scrollUp),
-            bundle: "com.apple.Notes",
-            areas: ScrollAreaCatalog.retarget([pageArea()], pointer: nil, focus: pagePointer),
-            pointer: nil
-        )
         XCTAssertEqual(performance.delivery, .swallow)
-        XCTAssertEqual(performance.outcomes, [expected.outcome])
-        XCTAssertEqual(fixture.poster.effects, expected.effects)
-        guard case .focusScroll = fixture.poster.effects.first else {
-            return XCTFail("focus scroll expected, got \(fixture.poster.effects)")
-        }
+        let center = ActuatorPoint(x: 100, y: 100)
+        XCTAssertEqual(fixture.poster.effects, [
+            .pointerMove(to: center),
+            .pointerScroll(
+                targetID: "page",
+                direction: .up,
+                amount: .points(60),
+                location: center,
+                horizontal: 0,
+                vertical: 60
+            ),
+        ])
     }
 
     func testCopyURLPostsOnlyForThePromisedBrowserList() {
@@ -630,7 +665,8 @@ final class NormalCommandSessionTests: XCTestCase {
             window: window
         )
         _ = fixture.session.handleKeyDown(KeyEvent("d"))
-        guard case .pointerScroll(_, _, _, let location, _, let vertical) = fixture.poster.effects.first else {
+        XCTAssertEqual(fixture.poster.effects.first, .pointerMove(to: ActuatorPoint(x: 410, y: 320)))
+        guard case .pointerScroll(_, _, _, let location, _, let vertical) = fixture.poster.effects.last else {
             return XCTFail("expected a half-page wheel, got \(fixture.poster.effects)")
         }
         XCTAssertEqual(location, ActuatorPoint(x: 410, y: 320))
@@ -648,9 +684,10 @@ final class NormalCommandSessionTests: XCTestCase {
         )
         let performance = fixture.session.handleKeyDown(KeyEvent("G"))
         XCTAssertEqual(performance.delivery, .swallow)
-        XCTAssertEqual(fixture.poster.effects.count, 8)
+        XCTAssertEqual(fixture.poster.effects.first, .pointerMove(to: ActuatorPoint(x: 200, y: 150)))
+        XCTAssertEqual(fixture.poster.effects.count, 9)
         guard case .pointerScroll(_, let direction, _, let location, _, let vertical) =
-            fixture.poster.effects.first
+            fixture.poster.effects.last
         else {
             return XCTFail("expected edge wheels, got \(fixture.poster.effects)")
         }
@@ -1088,7 +1125,8 @@ private func makeSession(
     pointer: ActuatorPoint? = pagePointer,
     window: ActuatorRect? = nil,
     banner: HintMissBanner? = nil,
-    bundles: @escaping @Sendable () -> [String] = { [] }
+    bundles: @escaping @Sendable () -> [String] = { [] },
+    deferral: (any WorkScheduling)? = nil
 ) -> SessionFixture {
     let clock = ManualKeyClock()
     let interpreter = EventInterpreter(
@@ -1114,12 +1152,13 @@ private func makeSession(
     let session = NormalCommandSession(
         pipeline: pipeline,
         decider: interpreter,
-        actuator: ActionActuator(poster: poster),
+        actuator: ActionActuator(poster: poster, deferral: deferral),
         snapshots: snapshots,
         pointer: point,
         focuser: focuser,
         banner: banner,
-        visionBundles: bundles
+        visionBundles: bundles,
+        deferral: deferral
     )
     return SessionFixture(
         pipeline: pipeline,
@@ -1243,4 +1282,123 @@ private func repoRoot(file: String = #filePath) -> URL {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
+}
+
+/// With a scheduler, the key hook decides and returns. Nothing that talks to
+/// another process runs before it has returned.
+extension NormalCommandSessionTests {
+    func testDeferredScrollIsSwallowedNowAndPostedLater() {
+        let later = ManualWork()
+        let fixture = makeSession(bundle: "com.apple.Safari", deferral: later)
+        let performance = fixture.session.handleKeyDown(KeyEvent("j"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(performance.swallowReason, .actuator)
+        XCTAssertTrue(fixture.poster.effects.isEmpty, "posting must not happen inside the hook")
+        XCTAssertEqual(fixture.reader.focusedReads, 0)
+        XCTAssertEqual(fixture.reader.windowReads, 0)
+        later.runPending()
+        XCTAssertEqual(fixture.poster.effects.count, 1)
+    }
+
+    func testDeferredGIEntersInsertNowAndFocusesLater() {
+        let later = ManualWork()
+        let fixture = makeSession(
+            bundle: "com.apple.Notes",
+            first: .found(sampleInput(path: [0, 3])),
+            deferral: later
+        )
+        _ = fixture.session.handleKeyDown(KeyEvent("g"))
+        let performance = fixture.session.handleKeyDown(KeyEvent("i"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(performance.mode, .insert, "the next typed letter must already be text")
+        XCTAssertEqual(performance.focusedPath, [0, 3])
+        XCTAssertEqual(fixture.focuser.paths, [], "the accessibility write must not run inside the hook")
+        XCTAssertEqual(fixture.reader.focusedReads, 0)
+        let typed = fixture.session.handleKeyDown(KeyEvent("j"))
+        XCTAssertEqual(typed.delivery, .passThrough)
+
+        later.runPending()
+        XCTAssertEqual(fixture.focuser.paths, [[0, 3]])
+        XCTAssertEqual(fixture.reader.focusedReads, 1)
+        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        XCTAssertEqual(fixture.pipeline.wiring.handleKeyDown(KeyEvent("k")).delivery, .passThrough)
+    }
+
+    func testDeferredGIClicksTheFieldWhenTheFocusWriteIsRefused() {
+        let later = ManualWork()
+        let fixture = makeSession(
+            bundle: "com.apple.Notes",
+            first: .found(sampleInput(path: [2])),
+            deferral: later
+        )
+        fixture.focuser.accept = false
+        _ = fixture.session.handleKeyDown(KeyEvent("g"))
+        let performance = fixture.session.handleKeyDown(KeyEvent("i"))
+        XCTAssertEqual(performance.mode, .insert)
+        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        let lines = ModeTrace.capture {
+            later.runPending()
+        }
+        XCTAssertEqual(fixture.poster.effects, [
+            .mouseClick(point: ActuatorPoint(x: 16, y: 10), button: .left, modifiers: []),
+        ])
+        XCTAssertTrue(lines.contains { $0.contains("gi decision=click") && $0.contains("reason=ax-focus-failed") }, "\(lines)")
+        XCTAssertTrue(lines.contains { $0.hasPrefix("timing stage=gi ms=") }, "\(lines)")
+    }
+
+    func testTapAdapterAsksForAFocusReadAfterAClickAndAfterAnUnknownKey() {
+        let fixture = makeSession(bundle: "com.apple.Safari")
+        let followUp = FollowUpLog()
+        let adapter = SessionTapAdapter(
+            session: fixture.session,
+            observer: SilentObserver(),
+            followUp: followUp,
+            focus: fixture.pipeline.cache
+        )
+        _ = adapter.handleSystemRecord(sampleKey(keyCode: 0x26, unicode: "j"))
+        XCTAssertEqual(followUp.events, [], "a known focus needs no extra read")
+
+        _ = adapter.handleSystemRecord(SystemKeyRecord(
+            kind: .other, keyCode: 0, modifierFlags: 0, unicode: "", pointerX: 10, pointerY: 20
+        ))
+        XCTAssertEqual(followUp.events, ["click"])
+
+        fixture.pipeline.cache.replace(CachedFocus(editability: .unknown, bundleIdentifier: "com.apple.Safari"))
+        _ = fixture.pipeline.wiring.publishCachedFocus()
+        let passed = adapter.handleSystemRecord(sampleKey(keyCode: 0x26, unicode: "j"))
+        XCTAssertEqual(passed.delivery, .passThrough)
+        XCTAssertEqual(followUp.events, ["click", "unknown-key"])
+
+        _ = adapter.handleSystemRecord(sampleKey(
+            keyCode: 0x26, unicode: "j", sourceUserData: SynthesizedEventMark.userData
+        ))
+        XCTAssertEqual(followUp.events, ["click", "unknown-key"], "our own events are not the user")
+    }
+
+    func testTapAdapterLogsHowLongASwallowedKeyTook() {
+        let fixture = makeSession(bundle: "com.apple.Safari")
+        let adapter = SessionTapAdapter(session: fixture.session, observer: SilentObserver())
+        let lines = ModeTrace.capture {
+            _ = adapter.handleSystemRecord(sampleKey(keyCode: 0x26, unicode: "j"))
+        }
+        XCTAssertTrue(lines.contains { $0.hasPrefix("timing stage=tap ms=") && $0.contains("delivery=swallow") }, "\(lines)")
+    }
+}
+
+private final class FollowUpLog: TapFollowUp, @unchecked Sendable {
+    private(set) var events: [String] = []
+
+    func pointerClicked() {
+        events.append("click")
+    }
+
+    func keyWhileFocusUnknown() {
+        events.append("unknown-key")
+    }
+}
+
+private final class SilentObserver: RuntimeObserving, @unchecked Sendable {
+    func runtimeDidHandle(_ decision: EventDecision?) {
+        _ = decision
+    }
 }

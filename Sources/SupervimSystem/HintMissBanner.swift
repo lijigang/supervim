@@ -11,17 +11,29 @@ public final class HintMissBanner: @unchecked Sendable {
     private let lock = NSLock()
     private var deadline: Date?
     private var messageText: String
+    private var reported: (@Sendable () -> Void)?
 
     public init(duration: TimeInterval = 2) {
         self.duration = duration
         self.messageText = Self.message
     }
 
+    /// Runs after each report. The hint scan reports from its own thread,
+    /// after the key that asked for it has returned, so the status item
+    /// cannot rely on that key to refresh it.
+    public func onReport(_ handler: @escaping @Sendable () -> Void) {
+        lock.lock()
+        reported = handler
+        lock.unlock()
+    }
+
     public func report(_ message: String) {
         lock.lock()
         messageText = message
         deadline = Date().addingTimeInterval(duration)
+        let handler = reported
         lock.unlock()
+        handler?()
     }
 
     public func reportMissingClickableElements() {

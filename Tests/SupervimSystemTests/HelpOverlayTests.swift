@@ -371,13 +371,10 @@ private func makeHelpSession(panel: SharedHelpPanel, clickable: ClickableElement
     let actuator = ActionActuator(poster: poster)
     let elements = clickable.map { [$0] } ?? []
     let hints = HintController(
-        querier: pipeline.scanner,
+        querier: HelpFixedClickables(elements: elements),
         presenter: panel,
         actuator: actuator,
-        mode: menu.keyDecider,
-        cache: LockedClickableCache(
-            query: .elements(ClickableSnapshot(elements: elements, truncated: false))
-        )
+        mode: menu.keyDecider
     )
     let help = HelpController(presenter: panel)
     let session = NormalCommandSession(
@@ -475,5 +472,17 @@ private final class HelpFocuser: InputFocusing, @unchecked Sendable {
     func focusInput(path: [Int]) -> Bool {
         _ = path
         return false
+    }
+}
+
+private final class HelpFixedClickables: ClickableQuerying, @unchecked Sendable {
+    private let elements: [ClickableElement]
+
+    init(elements: [ClickableElement]) {
+        self.elements = elements
+    }
+
+    func clickableElements() -> ClickableQuery {
+        .elements(ClickableSnapshot(elements: elements, truncated: false))
     }
 }

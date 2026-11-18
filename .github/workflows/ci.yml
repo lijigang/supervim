@@ -33,6 +33,8 @@ jobs:
         run: swift build
 
       - name: Test
+        env:
+          SUPERVIM_LIVE_AX_BENCH: "1"
         run: swift test
 
       - name: Render UI snapshots

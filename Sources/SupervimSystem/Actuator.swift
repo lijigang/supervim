@@ -98,19 +98,28 @@ public struct ActuationContext: Equatable, Sendable {
     public var bundleIdentifier: String
     public var pointer: ActuatorPoint?
     public var scrollAreas: [ScrollArea]
-    /// Front window in accessibility points. Used only when no scroll area exists.
+    /// Front window in accessibility points.
     public var windowFrame: ActuatorRect?
+    /// `AXScrollArea` / `AXWebArea` frames with no scroll bar to measure.
+    public var structuralAreas: [ScrollArea]
+    /// The focused text input while Normal is held on it. Scrolls go to the
+    /// content around it and never to the input itself.
+    public var composerFrame: ActuatorRect?
 
     public init(
         bundleIdentifier: String,
         pointer: ActuatorPoint? = nil,
         scrollAreas: [ScrollArea] = [],
-        windowFrame: ActuatorRect? = nil
+        windowFrame: ActuatorRect? = nil,
+        structuralAreas: [ScrollArea] = [],
+        composerFrame: ActuatorRect? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.pointer = pointer
         self.scrollAreas = scrollAreas
         self.windowFrame = windowFrame
+        self.structuralAreas = structuralAreas
+        self.composerFrame = composerFrame
     }
 }
 
@@ -180,6 +189,9 @@ public enum ActuatorEffect: Equatable, Sendable {
     )
     /// The vertical or horizontal bar was set to this edge. No key is typed.
     case scrollBarEdge(targetID: String, direction: ScrollDirection, value: Double)
+    /// Puts the pointer here before a wheel. macOS routes a wheel event by
+    /// where the pointer is, not by the location written on the event.
+    case pointerMove(to: ActuatorPoint)
 }
 
 public enum ActuatorOutcome: Equatable, Sendable {
@@ -219,244 +231,6 @@ public enum SynthesizedEventMark {
 
 public protocol ActuatorPosting: AnyObject, Sendable {
     func post(_ effect: ActuatorEffect)
-}
-
-/// Scroll hit rule.
-///
-/// The actuator scrolls one area, or it passes the action through.
-/// It never scrolls a window that neither contains the pointer nor contains the focus.
-///
-/// 1. Pointer chain. Consider areas whose `containsPointer` flag is set and
-///    whose frame contains the pointer. A nil pointer matches nothing.
-///    Order them by `depth` descending, then by `identifier` ascending.
-///    Walk that order and take the first area that can move in the requested
-///    direction.
-/// 2. Focus chain. If no pointer area can move, walk areas with
-///    `isFocusContainer` in the same order, skipping an identifier already
-///    considered, and take the first that can move.
-/// 3. Otherwise pass through. Do not scroll a different window.
-///
-/// An area can move when its remaining travel in that direction is greater
-/// than zero. Travel of zero or less is already at that edge, so the walk
-/// continues. The pointer chain is finished before any focus-only area is
-/// considered. That matches Vimium: the scroller under the cursor wins.
-///
-/// Point and half-page scrolls under the pointer become a pixel wheel event
-/// aimed at the pointer. The same scrolls on a focus-only area become an
-/// accessibility scroll-bar nudge, and only when that area's content size
-/// on the axis is known, finite, and larger than its visible size.
-/// Edge scrolls (`gg` / `G`) use that same area. They set the scroll bar's
-/// `AXValue` to the edge when it is settable and the value stays there,
-/// including when the pointer is over the area.
-/// Otherwise they post large wheel events at the area's center,
-/// repeating while a settable bar's value keeps changing.
-/// They do not send Home, End, or Command+arrow.
-/// If a distance cannot be computed, that area is skipped. If nothing
-/// remains, pass through.
-public enum ScrollHitRule {
-    public static func effect(
-        areas: [ScrollArea],
-        pointer: ActuatorPoint?,
-        direction: ScrollDirection,
-        amount: ScrollAmount
-    ) -> ActuatorEffect? {
-        let pointerAreas = ordered(areas.filter { isPointerTarget($0, pointer: pointer) })
-        var seen: Set<String> = []
-        for area in pointerAreas {
-            seen.insert(area.identifier)
-            if let effect = make(area, pointer: pointer, direction: direction, amount: amount, underPointer: true) {
-                return effect
-            }
-        }
-        let focusAreas = ordered(areas.filter(\.isFocusContainer))
-        for area in focusAreas where !seen.contains(area.identifier) {
-            if let effect = make(area, pointer: pointer, direction: direction, amount: amount, underPointer: false) {
-                return effect
-            }
-        }
-        return nil
-    }
-
-    private static func isPointerTarget(_ area: ScrollArea, pointer: ActuatorPoint?) -> Bool {
-        guard area.containsPointer, let pointer else {
-            return false
-        }
-        return area.frame.contains(pointer)
-    }
-
-    private static func ordered(_ areas: [ScrollArea]) -> [ScrollArea] {
-        areas.sorted { lhs, rhs in
-            if lhs.depth != rhs.depth {
-                return lhs.depth > rhs.depth
-            }
-            return lhs.identifier < rhs.identifier
-        }
-    }
-
-    private static func make(
-        _ area: ScrollArea,
-        pointer: ActuatorPoint?,
-        direction: ScrollDirection,
-        amount: ScrollAmount,
-        underPointer: Bool
-    ) -> ActuatorEffect? {
-        guard travel(area, direction) > 0 else {
-            return nil
-        }
-        switch amount {
-        case .edge:
-            return .edgeScroll(
-                targetID: area.identifier,
-                direction: direction,
-                location: center(area.frame),
-                role: area.role
-            )
-        case .points(let points):
-            guard let pixels = pointCount(points) else {
-                return nil
-            }
-            return pixelEffect(
-                area,
-                pointer: pointer,
-                direction: direction,
-                amount: amount,
-                pixels: pixels,
-                underPointer: underPointer
-            )
-        case .fractionOfPage(let numerator, let denominator):
-            guard let pixels = fractionCount(
-                numerator: numerator,
-                denominator: denominator,
-                visible: visibleSize(area, direction)
-            ) else {
-                return nil
-            }
-            return pixelEffect(
-                area,
-                pointer: pointer,
-                direction: direction,
-                amount: amount,
-                pixels: pixels,
-                underPointer: underPointer
-            )
-        }
-    }
-
-    private static func pixelEffect(
-        _ area: ScrollArea,
-        pointer: ActuatorPoint?,
-        direction: ScrollDirection,
-        amount: ScrollAmount,
-        pixels: Int,
-        underPointer: Bool
-    ) -> ActuatorEffect? {
-        if underPointer, let pointer {
-            let signed = signedPixels(direction: direction, magnitude: pixels)
-            return .pointerScroll(
-                targetID: area.identifier,
-                direction: direction,
-                amount: amount,
-                location: pointer,
-                horizontal: signed.horizontal,
-                vertical: signed.vertical
-            )
-        }
-        guard let range = scrollRange(area, direction: direction) else {
-            return nil
-        }
-        return .focusScroll(
-            targetID: area.identifier,
-            direction: direction,
-            amount: amount,
-            pixels: pixels,
-            scrollRange: range
-        )
-    }
-
-    private static func travel(_ area: ScrollArea, _ direction: ScrollDirection) -> Double {
-        switch direction {
-        case .left:
-            return area.travelLeft
-        case .down:
-            return area.travelDown
-        case .up:
-            return area.travelUp
-        case .right:
-            return area.travelRight
-        }
-    }
-
-    private static func visibleSize(_ area: ScrollArea, _ direction: ScrollDirection) -> Double {
-        switch direction {
-        case .left, .right:
-            return area.visibleWidth
-        case .up, .down:
-            return area.visibleHeight
-        }
-    }
-
-    private static func scrollRange(_ area: ScrollArea, direction: ScrollDirection) -> Double? {
-        let content: Double?
-        switch direction {
-        case .left, .right:
-            content = area.contentWidth
-        case .up, .down:
-            content = area.contentHeight
-        }
-        guard let content, content.isFinite else {
-            return nil
-        }
-        let visible = visibleSize(area, direction)
-        guard visible.isFinite, content > visible else {
-            return nil
-        }
-        let range = content - visible
-        guard range.isFinite, range > 0 else {
-            return nil
-        }
-        return range
-    }
-
-    private static func pointCount(_ points: Int) -> Int? {
-        guard points > 0, points <= Int(Int32.max) else {
-            return nil
-        }
-        return points
-    }
-
-    /// Half a page rounds to the nearest point, with a tie moving away from zero.
-    /// The result has to fit in a Quartz wheel delta. Otherwise the area is skipped.
-    private static func fractionCount(numerator: Int, denominator: Int, visible: Double) -> Int? {
-        guard numerator > 0, denominator > 0, visible.isFinite, visible > 0 else {
-            return nil
-        }
-        let raw = visible * Double(numerator) / Double(denominator)
-        guard raw.isFinite else {
-            return nil
-        }
-        let rounded = raw.rounded(.toNearestOrAwayFromZero)
-        guard rounded >= 1, rounded <= Double(Int32.max) else {
-            return nil
-        }
-        return Int(rounded)
-    }
-
-    private static func center(_ frame: ActuatorRect) -> ActuatorPoint {
-        ActuatorPoint(x: frame.x + frame.width / 2, y: frame.y + frame.height / 2)
-    }
-
-    private static func signedPixels(direction: ScrollDirection, magnitude: Int) -> (horizontal: Int, vertical: Int) {
-        switch direction {
-        case .left:
-            return (-magnitude, 0)
-        case .right:
-            return (magnitude, 0)
-        case .up:
-            return (0, magnitude)
-        case .down:
-            return (0, -magnitude)
-        }
-    }
 }
 
 /// Where Normal `j` / `k` should wheel while the caret is still in a text input.
@@ -508,7 +282,7 @@ public enum ContentScroll {
     /// An area about the same size as the focused input, and sitting on it,
     /// is the composer. A much larger parent that happens to contain the caret
     /// is the history and stays eligible.
-    private static func isFocusedInput(_ area: ScrollArea, _ focus: ActuatorRect?) -> Bool {
+    static func isFocusedInput(_ area: ScrollArea, _ focus: ActuatorRect?) -> Bool {
         if area.isTextInput {
             return true
         }
@@ -815,14 +589,24 @@ public enum EdgeScroll {
 
 /// Turns CommandMap actions into click, scroll, and shortcut effects.
 /// The recording poster in tests is the stand-in for the system poster.
-/// This type does not move the pointer itself.
+///
+/// Planning reads only the context it is given. With a `deferral` scheduler
+/// the outcome is returned as soon as the plan exists, and the scroll-bar
+/// reads, the accessibility press and the event posts run on that scheduler.
+/// The key hook uses that form. Without one, everything happens in the call.
 public final class ActionActuator: @unchecked Sendable {
     private let poster: any ActuatorPosting
     private let edgeBars: (any EdgeScrollBars)?
+    private let deferral: (any WorkScheduling)?
 
-    public init(poster: any ActuatorPosting, edgeBars: (any EdgeScrollBars)? = nil) {
+    public init(
+        poster: any ActuatorPosting,
+        edgeBars: (any EdgeScrollBars)? = nil,
+        deferral: (any WorkScheduling)? = nil
+    ) {
         self.poster = poster
         self.edgeBars = edgeBars
+        self.deferral = deferral
     }
 
     public func perform(_ action: Action, context: ActuationContext) -> ActuatorOutcome {
@@ -832,43 +616,88 @@ public final class ActionActuator: @unchecked Sendable {
         case .pass:
             return .passedThrough
         case .effects(let effects):
-            let resolved = effects.flatMap { resolve($0) }
-            for effect in resolved {
-                poster.post(effect)
+            guard let deferral else {
+                return .performed(post(effects))
             }
-            return .performed(resolved)
+            deferral.run { [self] in
+                _ = post(effects)
+            }
+            return .performed(effects)
+        }
+    }
+
+    @discardableResult
+    private func post(_ effects: [ActuatorEffect]) -> [ActuatorEffect] {
+        let watch = TraceStopwatch()
+        let resolved = resolve(effects)
+        for effect in resolved {
+            poster.post(effect)
+        }
+        if ModeTrace.isEnabled {
+            ModeTrace.noteTiming(
+                stage: "actuate",
+                milliseconds: watch.milliseconds,
+                fields: [("effects", "\(resolved.count)"), ("kind", Self.kind(resolved))]
+            )
+        }
+        return resolved
+    }
+
+    private static func kind(_ effects: [ActuatorEffect]) -> String {
+        guard let last = effects.last else {
+            return "none"
+        }
+        switch last {
+        case .accessibilityPress:
+            return "press"
+        case .mouseClick:
+            return "click"
+        case .pointerScroll, .focusScroll, .edgeScroll, .scrollBarEdge, .pointerMove:
+            return "scroll"
+        case .shortcut:
+            return "shortcut"
         }
     }
 
     /// Edge scrolls are not posted as `edgeScroll`. A settable bar becomes one
-    /// `scrollBarEdge`. Anything else becomes wheel events at the area center.
-    private func resolve(_ effect: ActuatorEffect) -> [ActuatorEffect] {
-        guard case .edgeScroll(let targetID, let direction, let location, let role) = effect else {
-            return [effect]
-        }
-        let names = EdgeScroll.names(for: direction)
-        var wheels: [ActuatorEffect] = []
-        let report = EdgeScroll.perform(
-            targetID: targetID,
-            direction: direction,
-            role: role,
-            sequence: names.sequence,
-            command: names.command,
-            bars: edgeBars
-        ) { horizontal, vertical in
-            wheels.append(.pointerScroll(
+    /// `scrollBarEdge`, and the pointer stays where it is. Anything else
+    /// becomes wheel events at the area center, after the pointer move.
+    private func resolve(_ effects: [ActuatorEffect]) -> [ActuatorEffect] {
+        var resolved: [ActuatorEffect] = []
+        for effect in effects {
+            guard case .edgeScroll(let targetID, let direction, let location, let role) = effect else {
+                resolved.append(effect)
+                continue
+            }
+            let names = EdgeScroll.names(for: direction)
+            var wheels: [ActuatorEffect] = []
+            let report = EdgeScroll.perform(
                 targetID: targetID,
                 direction: direction,
-                amount: .edge,
-                location: location,
-                horizontal: horizontal,
-                vertical: vertical
-            ))
+                role: role,
+                sequence: names.sequence,
+                command: names.command,
+                bars: edgeBars
+            ) { horizontal, vertical in
+                wheels.append(.pointerScroll(
+                    targetID: targetID,
+                    direction: direction,
+                    amount: .edge,
+                    location: location,
+                    horizontal: horizontal,
+                    vertical: vertical
+                ))
+            }
+            if wheels.isEmpty {
+                if case .pointerMove? = resolved.last {
+                    resolved.removeLast()
+                }
+                resolved.append(.scrollBarEdge(targetID: targetID, direction: direction, value: report.value ?? 0))
+            } else {
+                resolved.append(contentsOf: wheels)
+            }
         }
-        if !wheels.isEmpty {
-            return wheels
-        }
-        return [.scrollBarEdge(targetID: targetID, direction: direction, value: report.value ?? 0)]
+        return resolved
     }
 
     public func click(_ request: ClickRequest) -> ActuatorOutcome {
@@ -876,7 +705,13 @@ public final class ActionActuator: @unchecked Sendable {
             return .passedThrough
         }
         let effect = clickEffect(request)
-        poster.post(effect)
+        guard let deferral else {
+            _ = post([effect])
+            return .performed([effect])
+        }
+        deferral.run { [self] in
+            _ = post([effect])
+        }
         return .performed([effect])
     }
 
@@ -911,30 +746,14 @@ public final class ActionActuator: @unchecked Sendable {
         case .beginHint, .showHelp, .focusFirstInput, .passNextKey, .escape, .enterInsert:
             return .notActuatorWork
         case .scroll(let direction, let amount):
-            if let effect = ScrollHitRule.effect(
-                areas: context.scrollAreas,
-                pointer: context.pointer,
-                direction: direction,
-                amount: amount
-            ) {
-                ModeTrace.noteLine(ScrollFallback.targetLine(effect: effect, direction: direction))
-                return .effects([effect])
-            }
-            if context.scrollAreas.isEmpty {
-                if let window = context.windowFrame,
-                   let aim = ScrollFallback.aim(pointer: context.pointer, window: window),
-                   let effect = ScrollFallback.wheel(
-                       direction: direction,
-                       amount: amount,
-                       aim: aim,
-                       window: window
-                   ) {
-                    ModeTrace.noteLine(aim.logLine(direction: direction))
-                    return .effects([effect])
-                }
+            guard let aim = ScrollTargeting.aim(context: context, direction: direction),
+                  let effects = ScrollTargeting.effects(context: context, direction: direction, amount: amount)
+            else {
                 ModeTrace.noteLine(ScrollFallback.missLine(direction: direction))
+                return .pass
             }
-            return .pass
+            ModeTrace.noteLine(ScrollTargeting.logLine(aim, direction: direction))
+            return .effects(effects)
         case .sendShortcut(let combo):
             if restrictsToPromisedBrowsers(action), !PromisedApplications.isPromisedBrowser(context.bundleIdentifier) {
                 return .pass

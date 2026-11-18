@@ -189,7 +189,19 @@ final class SupervimRuntimeTests: XCTestCase {
         XCTAssertTrue(text.contains("CGPreflightListenEventAccess()"))
         XCTAssertTrue(text.contains("scanner.start()"))
         XCTAssertTrue(text.contains("HintController"))
-        XCTAssertTrue(text.contains("refreshClickables()"))
+        // The window is walked on a queue of its own. The old assembly walked
+        // it on the main run loop, which the key hook shared.
+        XCTAssertTrue(text.contains("ContextRefresher("))
+        XCTAssertTrue(text.contains("focusMayHaveChanged()"))
+        XCTAssertTrue(text.contains("QueueWork(label: \"supervim.scan\""))
+        XCTAssertTrue(text.contains("QueueWork(label: \"supervim.actuate\""))
+        XCTAssertTrue(text.contains("scanning: scanWork"))
+        XCTAssertTrue(text.contains("deferral: actWork"))
+        XCTAssertTrue(text.contains("followUp: refresher"))
+        XCTAssertTrue(text.contains("ModeChangeObserver("))
+        for token in ["refreshClickables()", "readFrontmostWindow(", "firstEditableInput()", "DispatchQueue.main"] {
+            XCTAssertFalse(text.contains(token), token)
+        }
         XCTAssertTrue(text.contains("NonActivatingHintPanel"))
         XCTAssertTrue(text.contains("AXElementStore()"))
         XCTAssertTrue(text.contains("edgeBars: scrollElements"))
@@ -258,15 +270,11 @@ private func makeShared(
     let hints: HintController?
     if let presenter {
         let elements = clickable.map { [$0] } ?? []
-        let cache = LockedClickableCache(
-            query: .elements(ClickableSnapshot(elements: elements, truncated: false))
-        )
         hints = HintController(
-            querier: pipeline.scanner,
+            querier: FixedClickables(elements: elements),
             presenter: presenter,
             actuator: actuator,
-            mode: menu.keyDecider,
-            cache: cache
+            mode: menu.keyDecider
         )
     } else {
         hints = nil
@@ -470,4 +478,17 @@ private func repoRoot(file: String = #filePath) -> URL {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
+}
+
+/// The hint controller scans when `f` is pressed. This is that scan.
+private final class FixedClickables: ClickableQuerying, @unchecked Sendable {
+    private let elements: [ClickableElement]
+
+    init(elements: [ClickableElement]) {
+        self.elements = elements
+    }
+
+    func clickableElements() -> ClickableQuery {
+        .elements(ClickableSnapshot(elements: elements, truncated: false))
+    }
 }
