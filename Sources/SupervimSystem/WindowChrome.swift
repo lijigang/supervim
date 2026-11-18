@@ -2,7 +2,154 @@
 import AppKit
 import SupervimCore
 
+/// A rounded group of rows with hairlines between them, like a list in
+/// System Settings. It draws its own fill so it follows light and dark.
+@MainActor
+final class ChromeCardView: NSView {
+    private let stack = NSStackView()
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
+
+    func replaceRows(_ rows: [NSView]) {
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                let rule = ChromeRuleView()
+                stack.addArrangedSubview(rule)
+                rule.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            }
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        needsDisplay = true
+    }
+
+    /// A row with the given views. The first view takes the spare width, so
+    /// the rest sit at the right edge.
+    static func row(_ views: [NSView], height: CGFloat = 38) -> NSStackView {
+        let row = NSStackView(views: views)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.distribution = .fill
+        row.spacing = 8
+        row.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 10)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.heightAnchor.constraint(greaterThanOrEqualToConstant: height).isActive = true
+        if let first = views.first {
+            first.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+            first.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        for view in views.dropFirst() {
+            view.setContentHuggingPriority(.required, for: .horizontal)
+        }
+        return row
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = ChromeAppearance.isDark(effectiveAppearance)
+        let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        (dark ? NSColor.white.withAlphaComponent(0.06) : NSColor.white.withAlphaComponent(0.72)).setFill()
+        path.fill()
+        let line = ChromeNSColor.color(
+            dark ? ChromePalette.darkStroke : ChromePalette.lightStroke,
+            alpha: contrast ? 0.9 : (dark ? 0.14 : 0.12)
+        )
+        line.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+}
+
+@MainActor
+private final class ChromeRuleView: NSView {
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: 1).isActive = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = ChromeAppearance.isDark(effectiveAppearance)
+        ChromeNSColor.color(
+            dark ? ChromePalette.darkStroke : ChromePalette.lightStroke,
+            alpha: dark ? 0.12 : 0.1
+        ).setFill()
+        NSRect(x: 12, y: 0, width: max(bounds.width - 12, 0), height: 1).fill()
+    }
+}
+
+@MainActor
+private enum WindowText {
+    static func title(_ text: String) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = ChromeFont.rounded(17, weight: .semibold)
+        field.textColor = .labelColor
+        return field
+    }
+
+    static func section(_ text: String) -> NSTextField {
+        let field = NSTextField(labelWithString: "")
+        field.attributedStringValue = NSAttributedString(
+            string: text.uppercased(),
+            attributes: [
+                .font: ChromeFont.rounded(10.5, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .kern: 0.7,
+            ]
+        )
+        return field
+    }
+
+    static func rowLabel(_ text: String, mono: Bool = false) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = mono ? ChromeFont.mono(12, weight: .regular) : ChromeFont.system(13, weight: .regular)
+        field.textColor = .labelColor
+        field.lineBreakMode = .byTruncatingMiddle
+        return field
+    }
+
+    static func notice() -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: "")
+        field.font = ChromeFont.system(12, weight: .medium)
+        field.textColor = .systemOrange
+        return field
+    }
+}
+
 /// Permission guide content. The window controller supplies the actions.
+///
+/// The first paragraph of the guidance is the instruction. The permissions
+/// to grant are rows in one card, each with its own button. The remaining
+/// paragraphs are background, set smaller and in the secondary color.
 @MainActor
 public final class PermissionGuideChrome: NSObject {
     public let root = NSView()
@@ -10,12 +157,15 @@ public final class PermissionGuideChrome: NSObject {
     public var onCheckAgain: @MainActor () -> Void
     public private(set) var primaryButton: NSButton?
 
-    private let bodyField = NSTextField(wrappingLabelWithString: "")
-    private let noticeField = NSTextField(wrappingLabelWithString: "")
-    private let linkStack = NSStackView()
+    private let leadField = NSTextField(wrappingLabelWithString: "")
+    private let detailField = NSTextField(wrappingLabelWithString: "")
+    private let noticeField = WindowText.notice()
+    private let card = ChromeCardView()
     private let checkAgainButton = NSButton()
-    private let heading = NSTextField(labelWithString: "")
+    private let heading = WindowText.title("")
     private var linkKinds: [PermissionKind] = []
+
+    private static let textWidth: CGFloat = 452
 
     public init(
         onOpen: @escaping @MainActor (PermissionKind) -> Void,
@@ -29,11 +179,44 @@ public final class PermissionGuideChrome: NSObject {
 
     public func render(_ guidance: PermissionGuidance) {
         heading.stringValue = guidance.title
-        bodyField.stringValue = guidance.body
+        let paragraphs = guidance.body
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        leadField.stringValue = paragraphs.first ?? ""
+        leadField.isHidden = paragraphs.isEmpty
+        detailField.attributedStringValue = Self.detail(Array(paragraphs.dropFirst()))
+        detailField.isHidden = paragraphs.count < 2
         noticeField.stringValue = guidance.notice
         noticeField.isHidden = guidance.notice.isEmpty
         checkAgainButton.title = guidance.checkAgainTitle
         rebuildLinks(guidance.links)
+    }
+
+    private static func detail(_ paragraphs: [String]) -> NSAttributedString {
+        let style = NSMutableParagraphStyle()
+        style.paragraphSpacing = 7
+        style.lineSpacing = 1.5
+        style.lineBreakMode = .byWordWrapping
+        return NSAttributedString(
+            string: paragraphs.joined(separator: "\n"),
+            attributes: [
+                .font: ChromeFont.system(11.5, weight: .regular),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: style,
+            ]
+        )
+    }
+
+    private static func name(for kind: PermissionKind) -> String {
+        switch kind {
+        case .accessibility:
+            return "Accessibility"
+        case .inputMonitoring:
+            return "Input Monitoring"
+        case .screenRecording:
+            return "Screen Recording (optional)"
+        }
     }
 
     private func install() {
@@ -47,21 +230,18 @@ public final class PermissionGuideChrome: NSObject {
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = 12
-        let mark = IconMarkView(side: 36)
+        let mark = IconMarkView(side: 32)
         mark.setContentHuggingPriority(.required, for: .horizontal)
-        heading.font = ChromeFont.rounded(18, weight: .semibold)
-        heading.textColor = .labelColor
         header.addArrangedSubview(mark)
         header.addArrangedSubview(heading)
 
-        bodyField.font = ChromeFont.system(13, weight: .regular)
-        bodyField.textColor = .labelColor
-        bodyField.maximumNumberOfLines = 0
-        bodyField.preferredMaxLayoutWidth = 452
+        leadField.font = ChromeFont.system(13, weight: .regular)
+        leadField.textColor = .labelColor
+        leadField.maximumNumberOfLines = 0
+        leadField.preferredMaxLayoutWidth = Self.textWidth
 
-        linkStack.orientation = .vertical
-        linkStack.alignment = .leading
-        linkStack.spacing = 8
+        detailField.maximumNumberOfLines = 0
+        detailField.preferredMaxLayoutWidth = Self.textWidth
 
         checkAgainButton.bezelStyle = .rounded
         checkAgainButton.controlSize = .large
@@ -71,40 +251,44 @@ public final class PermissionGuideChrome: NSObject {
         checkAgainButton.keyEquivalent = "\r"
         primaryButton = checkAgainButton
 
-        noticeField.font = ChromeFont.system(12, weight: .medium)
-        noticeField.textColor = .systemOrange
         noticeField.maximumNumberOfLines = 2
-        noticeField.preferredMaxLayoutWidth = 452
+        noticeField.preferredMaxLayoutWidth = Self.textWidth
 
         stack.addArrangedSubview(header)
-        stack.addArrangedSubview(bodyField)
-        stack.addArrangedSubview(linkStack)
+        stack.addArrangedSubview(leadField)
+        stack.addArrangedSubview(card)
+        stack.addArrangedSubview(detailField)
         stack.addArrangedSubview(checkAgainButton)
         stack.addArrangedSubview(noticeField)
+        stack.setCustomSpacing(16, after: header)
         root.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -20),
+            card.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
     }
 
     private func rebuildLinks(_ links: [PrivacyPaneLink]) {
-        for view in linkStack.arrangedSubviews {
-            linkStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
         linkKinds = links.map(\.kind)
+        var rows: [NSView] = []
         for (index, link) in links.enumerated() {
-            let button = NSButton(title: link.title, target: self, action: #selector(linkClicked(_:)))
+            let name = WindowText.rowLabel(Self.name(for: link.kind))
+            let button = NSButton(title: "Open Settings", target: self, action: #selector(linkClicked(_:)))
             button.tag = index
             button.bezelStyle = .rounded
-            button.font = ChromeFont.system(13, weight: .medium)
-            button.image = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: link.title)
+            button.controlSize = .small
+            button.font = ChromeFont.system(11.5, weight: .medium)
+            button.image = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: nil)
             button.imagePosition = .imageTrailing
-            linkStack.addArrangedSubview(button)
+            button.toolTip = link.title
+            button.setAccessibilityLabel(link.title)
+            rows.append(ChromeCardView.row([name, button]))
         }
+        card.replaceRows(rows)
+        card.isHidden = rows.isEmpty
     }
 
     @objc private func linkClicked(_ sender: NSButton) {
@@ -120,7 +304,7 @@ public final class PermissionGuideChrome: NSObject {
     }
 }
 
-/// Settings content for the exclusion list and launch-at-login checkbox.
+/// Settings content: launch at login, then the excluded apps as one card.
 @MainActor
 public final class SettingsChrome: NSObject {
     public let root = NSView()
@@ -128,11 +312,12 @@ public final class SettingsChrome: NSObject {
     public var onRemove: @MainActor (String) -> Void
     public var onLaunchAtLogin: @MainActor (Bool) -> Void
 
-    private let rows = NSStackView()
-    private let noticeField = NSTextField(wrappingLabelWithString: "")
-    private let launchButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let general = ChromeCardView()
+    private let excluded = ChromeCardView()
+    private let noticeField = WindowText.notice()
+    private let launchLabel = WindowText.rowLabel("")
+    private let launchSwitch = NSSwitch()
     private let addButton = NSButton(title: "", target: nil, action: nil)
-    private let emptyLabel = NSTextField(labelWithString: "Nothing excluded.")
     private var displayedBundles: [String] = []
 
     public init(
@@ -144,8 +329,8 @@ public final class SettingsChrome: NSObject {
         self.onRemove = onRemove
         self.onLaunchAtLogin = onLaunchAtLogin
         super.init()
-        launchButton.target = self
-        launchButton.action = #selector(launchClicked(_:))
+        launchSwitch.target = self
+        launchSwitch.action = #selector(launchClicked(_:))
         addButton.target = self
         addButton.action = #selector(addClicked(_:))
         install()
@@ -154,8 +339,9 @@ public final class SettingsChrome: NSObject {
     public func render(_ editor: ExclusionEditor) {
         addButton.title = editor.addButtonTitle
         addButton.isEnabled = editor.canAddFrontmost
-        launchButton.title = editor.launchAtLoginTitle
-        launchButton.state = editor.launchAtLogin ? .on : .off
+        launchLabel.stringValue = editor.launchAtLoginTitle
+        launchSwitch.setAccessibilityLabel(editor.launchAtLoginTitle)
+        launchSwitch.state = editor.launchAtLogin ? .on : .off
         noticeField.stringValue = editor.notice
         noticeField.isHidden = editor.notice.isEmpty
         displayedBundles = editor.bundleIdentifiers
@@ -174,77 +360,60 @@ public final class SettingsChrome: NSObject {
         header.alignment = .centerY
         header.spacing = 12
         let mark = IconMarkView(side: 32)
-        let title = NSTextField(labelWithString: "Settings")
-        title.font = ChromeFont.rounded(18, weight: .semibold)
-        title.textColor = .labelColor
+        mark.setContentHuggingPriority(.required, for: .horizontal)
         header.addArrangedSubview(mark)
-        header.addArrangedSubview(title)
+        header.addArrangedSubview(WindowText.title("Settings"))
 
-        launchButton.font = ChromeFont.system(13, weight: .regular)
+        launchSwitch.controlSize = .small
+        general.replaceRows([ChromeCardView.row([launchLabel, launchSwitch])])
 
-        let section = NSTextField(labelWithString: "EXCLUDED APPS")
-        section.font = ChromeFont.rounded(11, weight: .semibold)
-        section.textColor = .secondaryLabelColor
-
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = 6
-
-        emptyLabel.font = ChromeFont.system(12, weight: .regular)
-        emptyLabel.textColor = .secondaryLabelColor
+        let section = WindowText.section("Excluded apps")
 
         addButton.bezelStyle = .rounded
         addButton.font = ChromeFont.system(13, weight: .medium)
 
-        noticeField.font = ChromeFont.system(12, weight: .medium)
-        noticeField.textColor = .systemOrange
         noticeField.maximumNumberOfLines = 3
         noticeField.preferredMaxLayoutWidth = 400
 
         stack.addArrangedSubview(header)
-        stack.addArrangedSubview(launchButton)
+        stack.addArrangedSubview(general)
         stack.addArrangedSubview(section)
-        stack.addArrangedSubview(rows)
-        stack.addArrangedSubview(emptyLabel)
+        stack.addArrangedSubview(excluded)
         stack.addArrangedSubview(addButton)
         stack.addArrangedSubview(noticeField)
+        stack.setCustomSpacing(16, after: header)
+        stack.setCustomSpacing(18, after: general)
+        stack.setCustomSpacing(6, after: section)
+        stack.setCustomSpacing(10, after: excluded)
         root.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -20),
-            rows.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            general.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            excluded.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
     }
 
     private func rebuildRows(_ editor: ExclusionEditor) {
-        for view in rows.arrangedSubviews {
-            rows.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        emptyLabel.isHidden = !editor.bundleIdentifiers.isEmpty
+        var rows: [NSView] = []
         for (index, bundle) in editor.bundleIdentifiers.enumerated() {
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.alignment = .centerY
-            row.spacing = 8
-            let label = NSTextField(labelWithString: bundle)
-            label.font = ChromeFont.mono(12, weight: .regular)
-            label.textColor = .labelColor
-            label.lineBreakMode = .byTruncatingMiddle
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let label = WindowText.rowLabel(bundle, mono: true)
             let remove = NSButton(title: editor.removeButtonTitle, target: self, action: #selector(removeClicked(_:)))
             remove.tag = index
             remove.bezelStyle = .rounded
             remove.controlSize = .small
-            remove.font = ChromeFont.system(12, weight: .medium)
-            remove.setContentHuggingPriority(.required, for: .horizontal)
-            row.addArrangedSubview(label)
-            row.addArrangedSubview(remove)
-            rows.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+            remove.font = ChromeFont.system(11.5, weight: .medium)
+            remove.setAccessibilityLabel("\(editor.removeButtonTitle) \(bundle)")
+            rows.append(ChromeCardView.row([label, remove], height: 34))
         }
+        if rows.isEmpty {
+            let empty = WindowText.rowLabel("Nothing excluded.")
+            empty.textColor = .secondaryLabelColor
+            rows.append(ChromeCardView.row([empty], height: 34))
+        }
+        excluded.replaceRows(rows)
     }
 
     @objc private func addClicked(_ sender: NSButton) {
@@ -259,7 +428,7 @@ public final class SettingsChrome: NSObject {
         onRemove(displayedBundles[sender.tag])
     }
 
-    @objc private func launchClicked(_ sender: NSButton) {
+    @objc private func launchClicked(_ sender: NSSwitch) {
         onLaunchAtLogin(sender.state == .on)
     }
 }
