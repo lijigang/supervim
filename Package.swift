@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "SupervimSystem", targets: ["SupervimSystem"]),
         .executable(name: "Supervim", targets: ["Supervim"]),
         .executable(name: "SupervimUISnapshots", targets: ["SupervimUISnapshots"]),
+        .executable(name: "SupervimLabelPreviews", targets: ["SupervimLabelPreviews"]),
     ],
     targets: [
         .target(
@@ -31,6 +32,12 @@ let package = Package(
             name: "SupervimUISnapshots",
             dependencies: ["SupervimCore", "SupervimSystem"],
             path: "Tools/UISnapshots",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .executableTarget(
+            name: "SupervimLabelPreviews",
+            dependencies: ["SupervimCore", "SupervimSystem"],
+            path: "Tools/LabelPreviews",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(

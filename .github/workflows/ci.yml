@@ -127,3 +127,28 @@ jobs:
           name: Supervim-dmg
           path: build/Supervim.dmg
           if-no-files-found: error
+
+  label-previews:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          if [ -d /Applications/Xcode.app ]; then
+            sudo xcode-select -s /Applications/Xcode.app
+          else
+            XCODE="$(ls -d /Applications/Xcode*.app | sort | tail -n 1)"
+            sudo xcode-select -s "$XCODE"
+          fi
+          swift --version
+
+      - name: Render hint label previews
+        run: scripts/render-label-previews.sh build/label-previews
+
+      - name: Upload hint label previews
+        uses: actions/upload-artifact@v4
+        with:
+          name: label-previews
+          path: build/label-previews
+          if-no-files-found: error
