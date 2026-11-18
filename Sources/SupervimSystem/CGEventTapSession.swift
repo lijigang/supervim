@@ -94,6 +94,26 @@ public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
         removeTapLocked()
     }
 
+    /// Whether the tap is on right now. False when none is installed.
+    public var isTapEnabled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let parts else {
+            return false
+        }
+        return CGEvent.tapIsEnabled(tap: parts.port)
+    }
+
+    /// Switches the tap off without telling the guard, which is what macOS
+    /// does. The live test uses it to watch the watchdog bring the tap back.
+    func switchOffAsTheSystemDoes() {
+        lock.lock()
+        defer { lock.unlock() }
+        if let parts {
+            CGEvent.tapEnable(tap: parts.port, enable: false)
+        }
+    }
+
     deinit {
         lock.lock()
         removeTapLocked()
