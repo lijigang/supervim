@@ -1125,7 +1125,8 @@ private func makeSession(
     pointer: ActuatorPoint? = pagePointer,
     window: ActuatorRect? = nil,
     banner: HintMissBanner? = nil,
-    bundles: @escaping @Sendable () -> [String] = { [] }
+    bundles: @escaping @Sendable () -> [String] = { [] },
+    deferral: (any WorkScheduling)? = nil
 ) -> SessionFixture {
     let clock = ManualKeyClock()
     let interpreter = EventInterpreter(
@@ -1151,12 +1152,13 @@ private func makeSession(
     let session = NormalCommandSession(
         pipeline: pipeline,
         decider: interpreter,
-        actuator: ActionActuator(poster: poster),
+        actuator: ActionActuator(poster: poster, deferral: deferral),
         snapshots: snapshots,
         pointer: point,
         focuser: focuser,
         banner: banner,
-        visionBundles: bundles
+        visionBundles: bundles,
+        deferral: deferral
     )
     return SessionFixture(
         pipeline: pipeline,
@@ -1280,4 +1282,123 @@ private func repoRoot(file: String = #filePath) -> URL {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
+}
+
+/// With a scheduler, the key hook decides and returns. Nothing that talks to
+/// another process runs before it has returned.
+extension NormalCommandSessionTests {
+    func testDeferredScrollIsSwallowedNowAndPostedLater() {
+        let later = ManualWork()
+        let fixture = makeSession(bundle: "com.apple.Safari", deferral: later)
+        let performance = fixture.session.handleKeyDown(KeyEvent("j"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(performance.swallowReason, .actuator)
+        XCTAssertTrue(fixture.poster.effects.isEmpty, "posting must not happen inside the hook")
+        XCTAssertEqual(fixture.reader.focusedReads, 0)
+        XCTAssertEqual(fixture.reader.windowReads, 0)
+        later.runPending()
+        XCTAssertEqual(fixture.poster.effects.count, 1)
+    }
+
+    func testDeferredGIEntersInsertNowAndFocusesLater() {
+        let later = ManualWork()
+        let fixture = makeSession(
+            bundle: "com.apple.Notes",
+            first: .found(sampleInput(path: [0, 3])),
+            deferral: later
+        )
+        _ = fixture.session.handleKeyDown(KeyEvent("g"))
+        let performance = fixture.session.handleKeyDown(KeyEvent("i"))
+        XCTAssertEqual(performance.delivery, .swallow)
+        XCTAssertEqual(performance.mode, .insert, "the next typed letter must already be text")
+        XCTAssertEqual(performance.focusedPath, [0, 3])
+        XCTAssertEqual(fixture.focuser.paths, [], "the accessibility write must not run inside the hook")
+        XCTAssertEqual(fixture.reader.focusedReads, 0)
+        let typed = fixture.session.handleKeyDown(KeyEvent("j"))
+        XCTAssertEqual(typed.delivery, .passThrough)
+
+        later.runPending()
+        XCTAssertEqual(fixture.focuser.paths, [[0, 3]])
+        XCTAssertEqual(fixture.reader.focusedReads, 1)
+        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        XCTAssertEqual(fixture.pipeline.wiring.handleKeyDown(KeyEvent("k")).delivery, .passThrough)
+    }
+
+    func testDeferredGIClicksTheFieldWhenTheFocusWriteIsRefused() {
+        let later = ManualWork()
+        let fixture = makeSession(
+            bundle: "com.apple.Notes",
+            first: .found(sampleInput(path: [2])),
+            deferral: later
+        )
+        fixture.focuser.accept = false
+        _ = fixture.session.handleKeyDown(KeyEvent("g"))
+        let performance = fixture.session.handleKeyDown(KeyEvent("i"))
+        XCTAssertEqual(performance.mode, .insert)
+        XCTAssertTrue(fixture.poster.effects.isEmpty)
+        let lines = ModeTrace.capture {
+            later.runPending()
+        }
+        XCTAssertEqual(fixture.poster.effects, [
+            .mouseClick(point: ActuatorPoint(x: 16, y: 10), button: .left, modifiers: []),
+        ])
+        XCTAssertTrue(lines.contains { $0.contains("gi decision=click") && $0.contains("reason=ax-focus-failed") }, "\(lines)")
+        XCTAssertTrue(lines.contains { $0.hasPrefix("timing stage=gi ms=") }, "\(lines)")
+    }
+
+    func testTapAdapterAsksForAFocusReadAfterAClickAndAfterAnUnknownKey() {
+        let fixture = makeSession(bundle: "com.apple.Safari")
+        let followUp = FollowUpLog()
+        let adapter = SessionTapAdapter(
+            session: fixture.session,
+            observer: SilentObserver(),
+            followUp: followUp,
+            focus: fixture.pipeline.cache
+        )
+        _ = adapter.handleSystemRecord(sampleKey(keyCode: 0x26, unicode: "j"))
+        XCTAssertEqual(followUp.events, [], "a known focus needs no extra read")
+
+        _ = adapter.handleSystemRecord(SystemKeyRecord(
+            kind: .other, keyCode: 0, modifierFlags: 0, unicode: "", pointerX: 10, pointerY: 20
+        ))
+        XCTAssertEqual(followUp.events, ["click"])
+
+        fixture.pipeline.cache.replace(CachedFocus(editability: .unknown, bundleIdentifier: "com.apple.Safari"))
+        _ = fixture.pipeline.wiring.publishCachedFocus()
+        let passed = adapter.handleSystemRecord(sampleKey(keyCode: 0x26, unicode: "j"))
+        XCTAssertEqual(passed.delivery, .passThrough)
+        XCTAssertEqual(followUp.events, ["click", "unknown-key"])
+
+        _ = adapter.handleSystemRecord(sampleKey(
+            keyCode: 0x26, unicode: "j", sourceUserData: SynthesizedEventMark.userData
+        ))
+        XCTAssertEqual(followUp.events, ["click", "unknown-key"], "our own events are not the user")
+    }
+
+    func testTapAdapterLogsHowLongASwallowedKeyTook() {
+        let fixture = makeSession(bundle: "com.apple.Safari")
+        let adapter = SessionTapAdapter(session: fixture.session, observer: SilentObserver())
+        let lines = ModeTrace.capture {
+            _ = adapter.handleSystemRecord(sampleKey(keyCode: 0x26, unicode: "j"))
+        }
+        XCTAssertTrue(lines.contains { $0.hasPrefix("timing stage=tap ms=") && $0.contains("delivery=swallow") }, "\(lines)")
+    }
+}
+
+private final class FollowUpLog: TapFollowUp, @unchecked Sendable {
+    private(set) var events: [String] = []
+
+    func pointerClicked() {
+        events.append("click")
+    }
+
+    func keyWhileFocusUnknown() {
+        events.append("unknown-key")
+    }
+}
+
+private final class SilentObserver: RuntimeObserving, @unchecked Sendable {
+    func runtimeDidHandle(_ decision: EventDecision?) {
+        _ = decision
+    }
 }
