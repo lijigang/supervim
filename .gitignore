@@ -10,3 +10,4 @@ DerivedData/
 *.p12
 supervim-signing/
 xcuserdata/
+.build-tsan/
