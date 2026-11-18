@@ -322,11 +322,12 @@ final class ActuatorTests: XCTestCase {
             return XCTFail("expected wheels, got \(outcome)")
         }
         guard case .pointerScroll(let target, let direction, _, let location, let horizontal, let vertical) = first else {
-            return XCTFail("gg/G must wheel the j/k target at its center, got \(effects)")
+            return XCTFail("gg/G must wheel the j/k target, got \(effects)")
         }
         XCTAssertEqual(target, "page")
         XCTAssertEqual(direction, .down)
-        XCTAssertEqual(location, actuatorPoint(100, 100))
+        // The pointer is already over the page, so the wheels go where it is.
+        XCTAssertEqual(location, pointer)
         XCTAssertEqual(horizontal, 0)
         XCTAssertLessThan(vertical, -1000)
         for effect in effects {
@@ -344,6 +345,7 @@ final class ActuatorTests: XCTestCase {
         let side = scrollRegion("side", depth: 1, containsPointer: true, travelDown: 40)
         let document = scrollRegion(
             "doc",
+            frame: ActuatorRect(x: 300, y: 0, width: 400, height: 400),
             depth: 9,
             isFocusContainer: true,
             visibleHeight: 100,
@@ -390,9 +392,9 @@ final class ActuatorTests: XCTestCase {
         )
     }
 
-    func testFocusAreaIsUsedWhenNothingUnderThePointerCanMove() {
-        let pointer = actuatorPoint(5, 5)
-        let stuck = scrollRegion("stuck", depth: 3, containsPointer: true, travelDown: 0)
+    func testFocusAreaIsUsedWhenThePointerIsOutsideTheWindow() {
+        let pointer = actuatorPoint(-900, 5)
+        let side = scrollRegion("side", depth: 3, travelDown: 1)
         let document = scrollRegion(
             "doc",
             frame: ActuatorRect(x: 400, y: 400, width: 100, height: 100),
@@ -402,23 +404,49 @@ final class ActuatorTests: XCTestCase {
             travelDown: 200,
             contentHeight: 1000
         )
-        let context = actuation("com.apple.Safari", pointer: pointer, areas: [stuck, document])
+        var context = actuation("com.apple.Safari", pointer: pointer, areas: [side, document])
+        context.windowFrame = ActuatorRect(x: 0, y: 0, width: 800, height: 600)
         let poster = RecordingActuator()
         XCTAssertEqual(
             outcomeOf(.scroll(direction: .down, amount: .points(60)), context: context, poster: poster),
             .performed([
-                .focusScroll(
+                .pointerMove(to: actuatorPoint(450, 450)),
+                .pointerScroll(
                     targetID: "doc",
                     direction: .down,
                     amount: .points(60),
-                    pixels: 60,
-                    scrollRange: 900
+                    location: actuatorPoint(450, 450),
+                    horizontal: 0,
+                    vertical: -60
                 ),
             ])
         )
     }
 
-    func testHalfPageOnTheFocusBarUsesVisibleSizeAndContentRange() {
+    func testAnAreaThatFitsUnderThePointerDoesNotTakeTheWheelFromItsPane() {
+        // Content that fits has no travel either way. The wheel still goes
+        // where the pointer is, and the window names the target.
+        let pointer = actuatorPoint(5, 5)
+        let stuck = scrollRegion("stuck", depth: 3, containsPointer: true, travelDown: 0)
+        var context = actuation("com.apple.Safari", pointer: pointer, areas: [stuck])
+        context.windowFrame = ActuatorRect(x: 0, y: 0, width: 800, height: 600)
+        let poster = RecordingActuator()
+        XCTAssertEqual(
+            outcomeOf(.scroll(direction: .down, amount: .points(60)), context: context, poster: poster),
+            .performed([
+                .pointerScroll(
+                    targetID: "window",
+                    direction: .down,
+                    amount: .points(60),
+                    location: pointer,
+                    horizontal: 0,
+                    vertical: -60
+                ),
+            ])
+        )
+    }
+
+    func testHalfPageWithoutAPointerMovesToTheFocusedAreaAndUsesItsVisibleSize() {
         let document = scrollRegion(
             "doc",
             isFocusContainer: true,
@@ -432,43 +460,55 @@ final class ActuatorTests: XCTestCase {
         let context = actuation("com.apple.Safari", pointer: nil, areas: [document])
         let poster = RecordingActuator()
         let amount = ScrollAmount.fractionOfPage(numerator: 1, denominator: 2)
+        let center = actuatorPoint(100, 100)
         XCTAssertEqual(
             outcomeOf(.scroll(direction: .up, amount: amount), context: context, poster: poster),
             .performed([
-                .focusScroll(targetID: "doc", direction: .up, amount: amount, pixels: 100, scrollRange: 800),
+                .pointerMove(to: center),
+                .pointerScroll(
+                    targetID: "doc", direction: .up, amount: amount, location: center, horizontal: 0, vertical: 100
+                ),
             ])
         )
         let horizontal = RecordingActuator()
         XCTAssertEqual(
             outcomeOf(.scroll(direction: .left, amount: amount), context: context, poster: horizontal),
             .performed([
-                .focusScroll(targetID: "doc", direction: .left, amount: amount, pixels: 40, scrollRange: 200),
+                .pointerMove(to: center),
+                .pointerScroll(
+                    targetID: "doc", direction: .left, amount: amount, location: center, horizontal: -40, vertical: 0
+                ),
             ])
         )
     }
 
-    func testNoScrollableTargetPassesThrough() {
+    func testOnlyAScrollWithNothingToAimAtPassesThrough() {
         let poster = RecordingActuator()
         let empty = outcomeOf(
             .scroll(direction: .down, amount: .points(60)),
             context: actuation("com.apple.Safari"),
             poster: poster
         )
-        let stuck = outcomeOf(
+        XCTAssertEqual(empty, .passedThrough)
+        XCTAssertEqual(poster.effects, [])
+
+        // A page whose snapshot says "already at the bottom" still gets the
+        // wheel: the snapshot is older than the last scroll.
+        let stale = outcomeOf(
             .scroll(direction: .down, amount: .points(60)),
             context: pageContext(bundle: "com.apple.Safari", travelDown: 0),
             poster: poster
         )
-        let bystander = scrollRegion("other", travelDown: 500, contentHeight: 900)
-        let ignored = outcomeOf(
-            .scroll(direction: .down, amount: .points(60)),
-            context: actuation("com.apple.Safari", pointer: actuatorPoint(5, 5), areas: [bystander]),
-            poster: poster
-        )
-        XCTAssertEqual(empty, .passedThrough)
-        XCTAssertEqual(stuck, .passedThrough)
-        XCTAssertEqual(ignored, .passedThrough)
-        XCTAssertEqual(poster.effects, [])
+        XCTAssertEqual(stale, .performed([
+            .pointerScroll(
+                targetID: "page",
+                direction: .down,
+                amount: .points(60),
+                location: actuatorPoint(20, 30),
+                horizontal: 0,
+                vertical: -60
+            ),
+        ]))
     }
 
     func testPointerFlagOutsideTheFrameIsRejected() {
@@ -484,7 +524,16 @@ final class ActuatorTests: XCTestCase {
             context: actuation("com.apple.Safari", pointer: actuatorPoint(0, 0), areas: [area]),
             poster: poster
         )
-        XCTAssertEqual(outside, .passedThrough)
+        XCTAssertEqual(outside, .performed([
+            .pointerScroll(
+                targetID: "window",
+                direction: .down,
+                amount: .points(60),
+                location: actuatorPoint(0, 0),
+                horizontal: 0,
+                vertical: -60
+            ),
+        ]))
         let boundary = scrollRegion(
             "edge",
             frame: ActuatorRect(x: 0, y: 0, width: 10, height: 10),
@@ -511,15 +560,20 @@ final class ActuatorTests: XCTestCase {
     func testNilPointerDoesNotTrustTheContainsPointerFlag() {
         let area = scrollRegion("page", containsPointer: true, isFocusContainer: false, travelDown: 80)
         let poster = RecordingActuator()
+        let center = actuatorPoint(100, 100)
         XCTAssertEqual(
             outcomeOf(
                 .scroll(direction: .down, amount: .points(60)),
                 context: actuation("com.apple.Safari", pointer: nil, areas: [area]),
                 poster: poster
             ),
-            .passedThrough
+            .performed([
+                .pointerMove(to: center),
+                .pointerScroll(
+                    targetID: "page", direction: .down, amount: .points(60), location: center, horizontal: 0, vertical: -60
+                ),
+            ])
         )
-        XCTAssertEqual(poster.effects, [])
     }
 
     func testEqualDepthUsesIdentifierOrder() {
@@ -637,7 +691,7 @@ final class ActuatorTests: XCTestCase {
         )
     }
 
-    func testFocusPixelScrollWithoutAContentRangePassesThrough() {
+    func testFocusedAreaWithoutAPointerTakesWheelsAfterAPointerMove() {
         let document = scrollRegion(
             "doc",
             isFocusContainer: true,
@@ -645,6 +699,7 @@ final class ActuatorTests: XCTestCase {
             travelDown: 500,
             contentHeight: nil
         )
+        let center = actuatorPoint(100, 100)
         let poster = RecordingActuator()
         XCTAssertEqual(
             outcomeOf(
@@ -652,7 +707,12 @@ final class ActuatorTests: XCTestCase {
                 context: actuation("com.apple.Safari", areas: [document]),
                 poster: poster
             ),
-            .passedThrough
+            .performed([
+                .pointerMove(to: center),
+                .pointerScroll(
+                    targetID: "doc", direction: .down, amount: .points(60), location: center, horizontal: 0, vertical: -60
+                ),
+            ])
         )
         let edge = RecordingActuator()
         let edgeOutcome = outcomeOf(
@@ -663,15 +723,16 @@ final class ActuatorTests: XCTestCase {
         guard case .performed(let effects) = edgeOutcome else {
             return XCTFail("expected wheels, got \(edgeOutcome)")
         }
-        XCTAssertEqual(effects.count, EdgeScroll.unobservedBursts)
-        guard case .pointerScroll(let target, _, _, let location, let horizontal, let vertical) = effects.first else {
+        XCTAssertEqual(effects.first, .pointerMove(to: center))
+        XCTAssertEqual(effects.count, EdgeScroll.unobservedBursts + 1)
+        guard case .pointerScroll(let target, _, _, let location, let horizontal, let vertical) = effects.last else {
             return XCTFail("expected a center wheel, got \(effects)")
         }
         XCTAssertEqual(target, "doc")
-        XCTAssertEqual(location, actuatorPoint(100, 100))
+        XCTAssertEqual(location, center)
         XCTAssertEqual(horizontal, 0)
         XCTAssertEqual(vertical, -EdgeScroll.wheelPixels)
-        XCTAssertEqual(poster.effects, [])
+        XCTAssertEqual(edge.effects, effects)
     }
 
     func testFindCloseNewAndReloadPostInAnyApp() {
@@ -807,20 +868,6 @@ final class ActuatorTests: XCTestCase {
                 containsPointer: true,
                 visibleHeight: Double(Int32.max) * 4,
                 travelDown: 10
-            ),
-            scrollRegion(
-                "fit",
-                isFocusContainer: true,
-                visibleHeight: 100,
-                travelDown: 10,
-                contentHeight: 100
-            ),
-            scrollRegion(
-                "open",
-                isFocusContainer: true,
-                visibleHeight: 100,
-                travelDown: 10,
-                contentHeight: .infinity
             ),
         ]
         for area in cases {

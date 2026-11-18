@@ -98,19 +98,28 @@ public struct ActuationContext: Equatable, Sendable {
     public var bundleIdentifier: String
     public var pointer: ActuatorPoint?
     public var scrollAreas: [ScrollArea]
-    /// Front window in accessibility points. Used only when no scroll area exists.
+    /// Front window in accessibility points.
     public var windowFrame: ActuatorRect?
+    /// `AXScrollArea` / `AXWebArea` frames with no scroll bar to measure.
+    public var structuralAreas: [ScrollArea]
+    /// The focused text input while Normal is held on it. Scrolls go to the
+    /// content around it and never to the input itself.
+    public var composerFrame: ActuatorRect?
 
     public init(
         bundleIdentifier: String,
         pointer: ActuatorPoint? = nil,
         scrollAreas: [ScrollArea] = [],
-        windowFrame: ActuatorRect? = nil
+        windowFrame: ActuatorRect? = nil,
+        structuralAreas: [ScrollArea] = [],
+        composerFrame: ActuatorRect? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.pointer = pointer
         self.scrollAreas = scrollAreas
         self.windowFrame = windowFrame
+        self.structuralAreas = structuralAreas
+        self.composerFrame = composerFrame
     }
 }
 
@@ -180,6 +189,9 @@ public enum ActuatorEffect: Equatable, Sendable {
     )
     /// The vertical or horizontal bar was set to this edge. No key is typed.
     case scrollBarEdge(targetID: String, direction: ScrollDirection, value: Double)
+    /// Puts the pointer here before a wheel. macOS routes a wheel event by
+    /// where the pointer is, not by the location written on the event.
+    case pointerMove(to: ActuatorPoint)
 }
 
 public enum ActuatorOutcome: Equatable, Sendable {
@@ -508,7 +520,7 @@ public enum ContentScroll {
     /// An area about the same size as the focused input, and sitting on it,
     /// is the composer. A much larger parent that happens to contain the caret
     /// is the history and stays eligible.
-    private static func isFocusedInput(_ area: ScrollArea, _ focus: ActuatorRect?) -> Bool {
+    static func isFocusedInput(_ area: ScrollArea, _ focus: ActuatorRect?) -> Bool {
         if area.isTextInput {
             return true
         }
@@ -815,14 +827,24 @@ public enum EdgeScroll {
 
 /// Turns CommandMap actions into click, scroll, and shortcut effects.
 /// The recording poster in tests is the stand-in for the system poster.
-/// This type does not move the pointer itself.
+///
+/// Planning reads only the context it is given. With a `deferral` scheduler
+/// the outcome is returned as soon as the plan exists, and the scroll-bar
+/// reads, the accessibility press and the event posts run on that scheduler.
+/// The key hook uses that form. Without one, everything happens in the call.
 public final class ActionActuator: @unchecked Sendable {
     private let poster: any ActuatorPosting
     private let edgeBars: (any EdgeScrollBars)?
+    private let deferral: (any WorkScheduling)?
 
-    public init(poster: any ActuatorPosting, edgeBars: (any EdgeScrollBars)? = nil) {
+    public init(
+        poster: any ActuatorPosting,
+        edgeBars: (any EdgeScrollBars)? = nil,
+        deferral: (any WorkScheduling)? = nil
+    ) {
         self.poster = poster
         self.edgeBars = edgeBars
+        self.deferral = deferral
     }
 
     public func perform(_ action: Action, context: ActuationContext) -> ActuatorOutcome {
@@ -832,43 +854,88 @@ public final class ActionActuator: @unchecked Sendable {
         case .pass:
             return .passedThrough
         case .effects(let effects):
-            let resolved = effects.flatMap { resolve($0) }
-            for effect in resolved {
-                poster.post(effect)
+            guard let deferral else {
+                return .performed(post(effects))
             }
-            return .performed(resolved)
+            deferral.run { [self] in
+                _ = post(effects)
+            }
+            return .performed(effects)
+        }
+    }
+
+    @discardableResult
+    private func post(_ effects: [ActuatorEffect]) -> [ActuatorEffect] {
+        let watch = TraceStopwatch()
+        let resolved = resolve(effects)
+        for effect in resolved {
+            poster.post(effect)
+        }
+        if ModeTrace.isEnabled {
+            ModeTrace.noteTiming(
+                stage: "actuate",
+                milliseconds: watch.milliseconds,
+                fields: [("effects", "\(resolved.count)"), ("kind", Self.kind(resolved))]
+            )
+        }
+        return resolved
+    }
+
+    private static func kind(_ effects: [ActuatorEffect]) -> String {
+        guard let last = effects.last else {
+            return "none"
+        }
+        switch last {
+        case .accessibilityPress:
+            return "press"
+        case .mouseClick:
+            return "click"
+        case .pointerScroll, .focusScroll, .edgeScroll, .scrollBarEdge, .pointerMove:
+            return "scroll"
+        case .shortcut:
+            return "shortcut"
         }
     }
 
     /// Edge scrolls are not posted as `edgeScroll`. A settable bar becomes one
-    /// `scrollBarEdge`. Anything else becomes wheel events at the area center.
-    private func resolve(_ effect: ActuatorEffect) -> [ActuatorEffect] {
-        guard case .edgeScroll(let targetID, let direction, let location, let role) = effect else {
-            return [effect]
-        }
-        let names = EdgeScroll.names(for: direction)
-        var wheels: [ActuatorEffect] = []
-        let report = EdgeScroll.perform(
-            targetID: targetID,
-            direction: direction,
-            role: role,
-            sequence: names.sequence,
-            command: names.command,
-            bars: edgeBars
-        ) { horizontal, vertical in
-            wheels.append(.pointerScroll(
+    /// `scrollBarEdge`, and the pointer stays where it is. Anything else
+    /// becomes wheel events at the area center, after the pointer move.
+    private func resolve(_ effects: [ActuatorEffect]) -> [ActuatorEffect] {
+        var resolved: [ActuatorEffect] = []
+        for effect in effects {
+            guard case .edgeScroll(let targetID, let direction, let location, let role) = effect else {
+                resolved.append(effect)
+                continue
+            }
+            let names = EdgeScroll.names(for: direction)
+            var wheels: [ActuatorEffect] = []
+            let report = EdgeScroll.perform(
                 targetID: targetID,
                 direction: direction,
-                amount: .edge,
-                location: location,
-                horizontal: horizontal,
-                vertical: vertical
-            ))
+                role: role,
+                sequence: names.sequence,
+                command: names.command,
+                bars: edgeBars
+            ) { horizontal, vertical in
+                wheels.append(.pointerScroll(
+                    targetID: targetID,
+                    direction: direction,
+                    amount: .edge,
+                    location: location,
+                    horizontal: horizontal,
+                    vertical: vertical
+                ))
+            }
+            if wheels.isEmpty {
+                if case .pointerMove? = resolved.last {
+                    resolved.removeLast()
+                }
+                resolved.append(.scrollBarEdge(targetID: targetID, direction: direction, value: report.value ?? 0))
+            } else {
+                resolved.append(contentsOf: wheels)
+            }
         }
-        if !wheels.isEmpty {
-            return wheels
-        }
-        return [.scrollBarEdge(targetID: targetID, direction: direction, value: report.value ?? 0)]
+        return resolved
     }
 
     public func click(_ request: ClickRequest) -> ActuatorOutcome {
@@ -876,7 +943,13 @@ public final class ActionActuator: @unchecked Sendable {
             return .passedThrough
         }
         let effect = clickEffect(request)
-        poster.post(effect)
+        guard let deferral else {
+            _ = post([effect])
+            return .performed([effect])
+        }
+        deferral.run { [self] in
+            _ = post([effect])
+        }
         return .performed([effect])
     }
 
@@ -911,30 +984,14 @@ public final class ActionActuator: @unchecked Sendable {
         case .beginHint, .showHelp, .focusFirstInput, .passNextKey, .escape, .enterInsert:
             return .notActuatorWork
         case .scroll(let direction, let amount):
-            if let effect = ScrollHitRule.effect(
-                areas: context.scrollAreas,
-                pointer: context.pointer,
-                direction: direction,
-                amount: amount
-            ) {
-                ModeTrace.noteLine(ScrollFallback.targetLine(effect: effect, direction: direction))
-                return .effects([effect])
-            }
-            if context.scrollAreas.isEmpty {
-                if let window = context.windowFrame,
-                   let aim = ScrollFallback.aim(pointer: context.pointer, window: window),
-                   let effect = ScrollFallback.wheel(
-                       direction: direction,
-                       amount: amount,
-                       aim: aim,
-                       window: window
-                   ) {
-                    ModeTrace.noteLine(aim.logLine(direction: direction))
-                    return .effects([effect])
-                }
+            guard let aim = ScrollTargeting.aim(context: context, direction: direction),
+                  let effects = ScrollTargeting.effects(context: context, direction: direction, amount: amount)
+            else {
                 ModeTrace.noteLine(ScrollFallback.missLine(direction: direction))
+                return .pass
             }
-            return .pass
+            ModeTrace.noteLine(ScrollTargeting.logLine(aim, direction: direction))
+            return .effects(effects)
         case .sendShortcut(let combo):
             if restrictsToPromisedBrowsers(action), !PromisedApplications.isPromisedBrowser(context.bundleIdentifier) {
                 return .pass

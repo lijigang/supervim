@@ -71,9 +71,12 @@ public final class LockedCommandSnapshot: @unchecked Sendable {
 /// Performs scroll and application-shortcut decisions.
 ///
 /// The key path reads `LockedCommandSnapshot` and the pointer. It does not walk
-/// the accessibility tree. `gi` focuses the cached first input, then publishes
-/// the focus read. Insert starts only when that read is editable.
-/// A scroll with no ready target passes the original key through.
+/// the accessibility tree. With a `deferral` scheduler it makes no
+/// accessibility call at all: `gi` enters Insert from the snapshot and the
+/// focus request, the fallback click and the focus read run on the scheduler.
+/// Without one, `gi` focuses the cached first input before it returns.
+/// A scroll passes the original key through only when there is neither a
+/// window nor a pointer to aim at.
 /// `yy`, history, and tab shortcuts use the actuator's browser allowlist.
 /// Ctrl+] is not posted, and the following key is not posted either.
 public final class NormalCommandSession: @unchecked Sendable {
@@ -88,6 +91,7 @@ public final class NormalCommandSession: @unchecked Sendable {
     private let banner: HintMissBanner?
     private let windows: (any FrontWindowReading)?
     private let visionBundles: @Sendable () -> [String]
+    private let deferral: (any WorkScheduling)?
 
     public init(
         pipeline: FocusPipeline,
@@ -100,7 +104,8 @@ public final class NormalCommandSession: @unchecked Sendable {
         help: (any HelpCommandHandling)? = nil,
         banner: HintMissBanner? = nil,
         windows: (any FrontWindowReading)? = nil,
-        visionBundles: @escaping @Sendable () -> [String] = { Settings.defaultVisionBundleIdentifiers }
+        visionBundles: @escaping @Sendable () -> [String] = { Settings.defaultVisionBundleIdentifiers },
+        deferral: (any WorkScheduling)? = nil
     ) {
         self.pipeline = pipeline
         self.decider = decider
@@ -113,6 +118,7 @@ public final class NormalCommandSession: @unchecked Sendable {
         self.banner = banner
         self.windows = windows
         self.visionBundles = visionBundles
+        self.deferral = deferral
     }
 
     public func replaceSnapshot(_ snapshot: CommandSnapshot) {
@@ -154,18 +160,17 @@ public final class NormalCommandSession: @unchecked Sendable {
 
         if wantsActuation, let snapshot {
             let scrolling = prepared.actuatorActions.contains(where: isScroll)
-            let aimed = scrolling ? aimedScroll(snapshot: snapshot, actions: prepared.actuatorActions) : nil
-            let point = aimed?.point ?? (scrolling ? pointer.currentPointer() : nil)
-            let areas = aimed?.areas ?? (
-                scrolling && snapshot.scrollCatalogReady
-                    ? ScrollAreaCatalog.retarget(snapshot.scrollAreas, pointer: point, focus: snapshot.focusPoint)
-                    : []
-            )
+            let point = scrolling ? pointer.currentPointer() : nil
+            let ready = scrolling && snapshot.scrollCatalogReady
             let context = ActuationContext(
                 bundleIdentifier: pipeline.cache.currentFocus().bundleIdentifier,
                 pointer: point,
-                scrollAreas: areas,
-                windowFrame: snapshot.windowFrame ?? windows?.frontWindowFrame()
+                scrollAreas: ready
+                    ? ScrollAreaCatalog.retarget(snapshot.scrollAreas, pointer: point, focus: snapshot.focusPoint)
+                    : [],
+                windowFrame: scrolling ? (snapshot.windowFrame ?? windows?.frontWindowFrame()) : nil,
+                structuralAreas: ready ? snapshot.structuralAreas : [],
+                composerFrame: scrolling ? holdingComposer(mode: decider.mode) : nil
             )
             for action in prepared.actuatorActions {
                 let outcome = actuator.perform(action, context: context)
@@ -278,38 +283,6 @@ public final class NormalCommandSession: @unchecked Sendable {
         )
     }
 
-    /// While Normal is held on the focused input, wheel the history area and
-    /// do not fall back to scrolling that input.
-    private func aimedScroll(
-        snapshot: CommandSnapshot,
-        actions: [Action]
-    ) -> (areas: [ScrollArea], point: ActuatorPoint?)? {
-        guard snapshot.scrollCatalogReady, let frame = holdingComposer(mode: decider.mode) else {
-            return nil
-        }
-        guard let direction = firstScrollDirection(actions) else {
-            return nil
-        }
-        let point = pointer.currentPointer()
-        var areas = ScrollAreaCatalog.retarget(snapshot.scrollAreas, pointer: point, focus: snapshot.focusPoint)
-        let known = Set(areas.map(\.identifier))
-        let extra = ScrollAreaCatalog.retarget(snapshot.structuralAreas, pointer: point, focus: snapshot.focusPoint)
-        for area in extra where !known.contains(area.identifier) {
-            areas.append(area)
-        }
-        guard let aim = ContentScroll.aim(
-            areas: areas,
-            pointer: point,
-            excludedFrame: frame,
-            direction: direction
-        ) else {
-            return ([], point)
-        }
-        var marked = aim.area
-        marked.containsPointer = true
-        return ([marked], aim.location)
-    }
-
     private func holdingComposer(mode: SupervimMode) -> ActuatorRect? {
         guard mode == .normal else {
             return nil
@@ -322,15 +295,6 @@ public final class NormalCommandSession: @unchecked Sendable {
             return nil
         }
         return ActuatorRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
-    }
-
-    private func firstScrollDirection(_ actions: [Action]) -> ScrollDirection? {
-        for action in actions {
-            if case .scroll(let direction, _) = action {
-                return direction
-            }
-        }
-        return nil
     }
 
     /// `gi`. Accessibility focus is tried first. A failed focus clicks the
@@ -347,6 +311,25 @@ public final class NormalCommandSession: @unchecked Sendable {
             let usable = target.frame.width > 0 && target.frame.height > 0
                 && center.x.isFinite && center.y.isFinite
             let pathText = target.path.map(String.init).joined(separator: "/")
+            if usable, let deferral {
+                decider.releaseHeldInput()
+                let mode = decider.enterInsertAfterFocus()
+                deferral.run { [self] in
+                    let watch = TraceStopwatch()
+                    let focused = focuser.focusInput(path: target.path)
+                    if !focused {
+                        _ = actuator.click(ClickRequest(point: center, kind: .plain))
+                    }
+                    ModeTrace.noteLine(InputChoice.logLine(
+                        decision: focused ? "ax-focused" : "click",
+                        fields: (focused ? [] : ["reason=ax-focus-failed"])
+                            + ["path=\(pathText)", "role=\(target.role ?? "-")", "x=\(center.x)", "y=\(center.y)"]
+                    ))
+                    _ = pipeline.scanner.noteFocusChanged()
+                    ModeTrace.noteTiming(stage: "gi", milliseconds: watch.milliseconds, fields: [("focused", focused ? "1" : "0")])
+                }
+                return (target.path, mode)
+            }
             if usable, focuser.focusInput(path: target.path) {
                 ModeTrace.noteLine(InputChoice.logLine(
                     decision: "ax-focused",
@@ -397,8 +380,15 @@ public final class NormalCommandSession: @unchecked Sendable {
 
     private func commitInsert(path: [Int]?) -> (path: [Int]?, mode: SupervimMode) {
         decider.releaseHeldInput()
-        _ = pipeline.scanner.noteFocusChanged()
-        return (path, decider.enterInsertAfterFocus())
+        guard let deferral else {
+            _ = pipeline.scanner.noteFocusChanged()
+            return (path, decider.enterInsertAfterFocus())
+        }
+        let mode = decider.enterInsertAfterFocus()
+        deferral.run { [pipeline] in
+            _ = pipeline.scanner.noteFocusChanged()
+        }
+        return (path, mode)
     }
 
     private func isScroll(_ action: Action) -> Bool {
