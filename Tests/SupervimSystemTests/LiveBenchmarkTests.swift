@@ -20,6 +20,17 @@ final class LiveBenchmarkTests: XCTestCase {
         }
         panel.hideOverlay()
         print("BENCH overlay cold labels=50 first_ms=\(Self.text(cold))")
+
+        // What the app does: the panel is made and drawn once at launch,
+        // before the first `f`.
+        let warmed = NonActivatingHintPanel()
+        warmed.prewarm()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let afterPrewarm = Self.milliseconds {
+            warmed.present(OverlayPresentation(markers: Self.markers(50), policy: .hintLabels))
+        }
+        warmed.hideOverlay()
+        print("BENCH overlay prewarmed labels=50 first_ms=\(Self.text(afterPrewarm))")
         for count in [50, 150, 300] {
             let markers = Self.markers(count)
             var first: [Double] = []
@@ -59,7 +70,7 @@ final class LiveBenchmarkTests: XCTestCase {
         if let settings = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
             NSWorkspace.shared.openApplication(at: settings, configuration: NSWorkspace.OpenConfiguration())
         }
-        var best: (name: String, window: AXUIElement, nodes: Int)?
+        var best: (name: String, pid: pid_t, window: AXUIElement, nodes: Int)?
         let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(1))
@@ -78,7 +89,7 @@ final class LiveBenchmarkTests: XCTestCase {
                         options: TreeWalkOptions(budgetMilliseconds: 3_000, workers: 4, prunesHidden: false)
                     )
                     if walked.read > (best?.nodes ?? 0) {
-                        best = (app.bundleIdentifier ?? "-", window, walked.read)
+                        best = (app.bundleIdentifier ?? "-", app.processIdentifier, window, walked.read)
                     }
                 }
             }
@@ -86,40 +97,69 @@ final class LiveBenchmarkTests: XCTestCase {
                 break
             }
         }
-        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-"
-        print("BENCH ax trusted=1 frontmost=\(front) target=\(best?.name ?? "-") nodes=\(best?.nodes ?? 0)")
+        print("BENCH ax trusted=1 target=\(best?.name ?? "-") nodes=\(best?.nodes ?? 0)")
         guard let best, best.nodes > 0 else {
             throw XCTSkip("no app on this machine exposed a window through Accessibility")
         }
 
-        var legacyNodes = 0
-        let legacy = Self.rounds {
-            legacyNodes = LegacyWalk.count(best.window, limits: .standard)
-        }
-        print("BENCH ax walk=v0.1.4-per-attribute nodes=\(legacyNodes) \(legacy)")
-
+        // The four readers take turns, seven rounds each, after one round
+        // that is not counted. A window that is still filling in, or a busy
+        // minute on the machine, then costs each reader the same.
         let variants: [(String, TreeWalkOptions)] = [
             ("batched-1-thread", TreeWalkOptions(workers: 1, prunesHidden: false)),
             ("batched-4-threads", TreeWalkOptions(workers: 4, prunesHidden: false)),
             ("batched-4-threads-pruned", TreeWalkOptions(workers: AXSystemReader.walkWorkers, prunesHidden: true)),
         ]
-        for (name, options) in variants {
-            var walked: WalkedTree<LiveNode>?
-            let timing = Self.rounds {
-                walked = AXSystemReader.copyTree(best.window, options: options)
+        var legacyNodes = 0
+        var legacySamples: [Double] = []
+        var samples = [[Double]](repeating: [], count: variants.count)
+        var walks = [WalkedTree<LiveNode>?](repeating: nil, count: variants.count)
+        for round in 0..<8 {
+            let legacy = Self.milliseconds {
+                legacyNodes = LegacyWalk.count(best.window, limits: .standard)
             }
+            if round > 0 {
+                legacySamples.append(legacy)
+            }
+            for (index, variant) in variants.enumerated() {
+                let taken = Self.milliseconds {
+                    walks[index] = AXSystemReader.copyTree(best.window, options: variant.1)
+                }
+                if round > 0 {
+                    samples[index].append(taken)
+                }
+            }
+        }
+        print("BENCH ax walk=v0.1.4-per-attribute nodes=\(legacyNodes) \(Self.summary(legacySamples))")
+        for (index, variant) in variants.enumerated() {
+            let walked = walks[index]
             print(
-                "BENCH ax walk=\(name) nodes=\(walked?.read ?? 0) pruned=\(walked?.pruned ?? 0) "
-                    + "levels=\(walked?.levels ?? 0) \(timing)"
+                "BENCH ax walk=\(variant.0) nodes=\(walked?.read ?? 0) pruned=\(walked?.pruned ?? 0) "
+                    + "levels=\(walked?.levels ?? 0) \(Self.summary(samples[index]))"
             )
             if let root = walked?.root {
                 var hits = 0
                 let detect = Self.rounds {
                     hits = FocusClassification.countedClickables(in: root, limits: .standard).snapshot.elements.count
                 }
-                print("BENCH ax detect walk=\(name) hits=\(hits) \(detect)")
+                print("BENCH ax detect walk=\(variant.0) hits=\(hits) \(detect)")
             }
         }
+
+        // Bring the measured app to the front so the scan the app itself
+        // runs for `f` has a window to find.
+        let target = NSRunningApplication(processIdentifier: best.pid)
+        if let bundle = target?.bundleURL {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(at: bundle, configuration: configuration)
+        }
+        target?.activate(options: [.activateAllWindows])
+        let settle = Date().addingTimeInterval(5)
+        while Date() < settle, NSWorkspace.shared.frontmostApplication?.processIdentifier != best.pid {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-"
 
         let reader = AXSystemReader()
         let pipeline = FocusPipeline(
@@ -146,7 +186,11 @@ final class LiveBenchmarkTests: XCTestCase {
         for _ in 0..<5 {
             samples.append(milliseconds(body))
         }
-        return "min_ms=\(text(samples.min() ?? 0)) median_ms=\(text(median(samples))) max_ms=\(text(samples.max() ?? 0))"
+        return summary(samples)
+    }
+
+    private static func summary(_ samples: [Double]) -> String {
+        "min_ms=\(text(samples.min() ?? 0)) median_ms=\(text(median(samples))) max_ms=\(text(samples.max() ?? 0))"
     }
 
     private static func median(_ samples: [Double]) -> Double {
