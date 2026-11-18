@@ -11,12 +11,22 @@ public enum EventTapError: Error, Equatable, Sendable {
 /// The callback decides swallow or pass-through. `NormalCommandSession` performs
 /// scrolls and shortcuts. The menu-bar app installs this only after the focus
 /// scanner is running and Accessibility plus Input Monitoring are granted.
+///
+/// The tap has a thread and a run loop of its own. On the main run loop it
+/// waited behind menus, drawing and accessibility notifications, and a slow
+/// turn there is what makes macOS switch a tap off. A timer on a separate
+/// queue asks the port every half second whether it is still on, because the
+/// notice that it was switched off arrives through the same run loop that
+/// was too slow.
 public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
+    public static let watchdogIntervalMilliseconds = 500
+
     private let box: EventTapBox
     private let lock = NSLock()
-    private var port: CFMachPort?
-    private var source: CFRunLoopSource?
-    private var runLoop: CFRunLoop?
+    private var parts: TapParts?
+    private var loop: TapLoop?
+    private var tapGuard: TapGuard?
+    private var watchdog: DispatchSourceTimer?
 
     public init(wiring: any SystemKeyHandling) {
         box = EventTapBox(wiring: wiring)
@@ -25,7 +35,7 @@ public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
     public func install() throws {
         lock.lock()
         defer { lock.unlock() }
-        if port != nil {
+        if parts != nil {
             return
         }
         let eventMask = eventBit(.keyDown) | eventBit(.keyUp) | eventBit(.flagsChanged) | eventBit(.leftMouseDown)
@@ -43,13 +53,39 @@ public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
             CFMachPortInvalidate(created)
             throw EventTapError.creationFailed
         }
-        let loop = CFRunLoopGetCurrent()
-        CFRunLoopAddSource(loop, createdSource, .commonModes)
-        CGEvent.tapEnable(tap: created, enable: true)
-        port = created
-        source = createdSource
-        runLoop = loop
-        box.setPort(created)
+        let made = TapParts(port: created, source: createdSource)
+        let tapGuard = TapGuard(port: MachTapPort(parts: made))
+        box.setGuard(tapGuard)
+
+        let tapLoop = TapLoop()
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            tapLoop.set(CFRunLoopGetCurrent())
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), made.source, .commonModes)
+            CGEvent.tapEnable(tap: made.port, enable: true)
+            ready.signal()
+            CFRunLoopRun()
+        }
+        thread.name = "supervim.event-tap"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        ready.wait()
+
+        let timer = DispatchSource.makeTimerSource(
+            queue: DispatchQueue(label: "supervim.event-tap.watchdog", qos: .userInitiated)
+        )
+        let interval = DispatchTimeInterval.milliseconds(Self.watchdogIntervalMilliseconds)
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(50))
+        timer.setEventHandler {
+            tapGuard.check()
+        }
+        timer.resume()
+
+        parts = made
+        loop = tapLoop
+        self.tapGuard = tapGuard
+        watchdog = timer
+        ModeTrace.noteLine("tap-installed thread=supervim.event-tap watchdog_ms=\(Self.watchdogIntervalMilliseconds)")
     }
 
     public func uninstall() {
@@ -65,17 +101,21 @@ public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
     }
 
     private func removeTapLocked() {
-        box.setPort(nil)
-        if let source, let runLoop {
-            CFRunLoopRemoveSource(runLoop, source, .commonModes)
+        tapGuard?.release()
+        box.setGuard(nil)
+        watchdog?.cancel()
+        watchdog = nil
+        tapGuard = nil
+        if let parts {
+            CGEvent.tapEnable(tap: parts.port, enable: false)
+            if let runLoop = loop?.get() {
+                CFRunLoopRemoveSource(runLoop, parts.source, .commonModes)
+                CFRunLoopStop(runLoop)
+            }
+            CFMachPortInvalidate(parts.port)
         }
-        if let port {
-            CGEvent.tapEnable(tap: port, enable: false)
-            CFMachPortInvalidate(port)
-        }
-        source = nil
-        port = nil
-        runLoop = nil
+        parts = nil
+        loop = nil
     }
 
     private func eventBit(_ type: CGEventType) -> CGEventMask {
@@ -83,31 +123,74 @@ public final class CGEventTapSession: EventTapInstalling, @unchecked Sendable {
     }
 }
 
+/// The Mach port and its run loop source. Both are used from the tap thread
+/// and from the thread that installs and removes the tap.
+private struct TapParts: @unchecked Sendable {
+    let port: CFMachPort
+    let source: CFRunLoopSource
+}
+
+private final class TapLoop: @unchecked Sendable {
+    private let lock = NSLock()
+    private var runLoop: CFRunLoop?
+
+    func set(_ runLoop: CFRunLoop) {
+        lock.lock()
+        self.runLoop = runLoop
+        lock.unlock()
+    }
+
+    func get() -> CFRunLoop? {
+        lock.lock()
+        defer { lock.unlock() }
+        return runLoop
+    }
+}
+
+private final class MachTapPort: TapPortControlling, @unchecked Sendable {
+    private let parts: TapParts
+
+    init(parts: TapParts) {
+        self.parts = parts
+    }
+
+    func isEnabled() -> Bool {
+        CGEvent.tapIsEnabled(tap: parts.port)
+    }
+
+    func enable() {
+        CGEvent.tapEnable(tap: parts.port, enable: true)
+    }
+}
+
 private final class EventTapBox: @unchecked Sendable {
     let wiring: any SystemKeyHandling
     private let lock = NSLock()
-    private var port: CFMachPort?
+    private var tapGuard: TapGuard?
 
     init(wiring: any SystemKeyHandling) {
         self.wiring = wiring
     }
 
-    func setPort(_ port: CFMachPort?) {
+    func setGuard(_ tapGuard: TapGuard?) {
         lock.lock()
-        self.port = port
+        self.tapGuard = tapGuard
         lock.unlock()
     }
 
     func receive(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             lock.lock()
-            let current = port
+            let tapGuard = self.tapGuard
             lock.unlock()
-            let reason = type == .tapDisabledByUserInput ? "userInput" : "timeout"
-            if let current {
-                CGEvent.tapEnable(tap: current, enable: true)
+            if let tapGuard {
+                tapGuard.disabled(type == .tapDisabledByUserInput ? .userInput : .timeout)
+            } else {
+                ModeTrace.noteLine(ModeTrace.formatTapDisabled(
+                    reason: type == .tapDisabledByUserInput ? "userInput" : "timeout",
+                    reenabled: false
+                ))
             }
-            ModeTrace.noteLine(ModeTrace.formatTapDisabled(reason: reason, reenabled: current != nil))
             return Unmanaged.passUnretained(event)
         }
         let outcome = wiring.handleSystemRecord(SystemKeyRecord(event: event, type: type))
