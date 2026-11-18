@@ -952,14 +952,23 @@ final class ActuatorTests: XCTestCase {
 
     func testHitRuleIsWrittenNextToTheSelector() throws {
         let text = try String(contentsOf: actuatorSource, encoding: .utf8)
-        XCTAssertTrue(text.contains("Scroll hit rule."))
-        XCTAssertTrue(text.contains("large wheel events at the area's center"))
-        XCTAssertTrue(text.contains("do not send Home, End, or Command+arrow"))
+        let rule = try String(
+            contentsOf: actuatorSource.deletingLastPathComponent().appendingPathComponent("ScrollTargeting.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(rule.contains("delivers a wheel event to the view under the pointer"))
+        XCTAssertTrue(rule.contains("the pointer is moved first"))
+        XCTAssertTrue(rule.contains("Remaining travel is not consulted"))
+        XCTAssertTrue(rule.contains("the key passes through"))
+        XCTAssertTrue(text.contains("ScrollTargeting.effects("))
+        XCTAssertFalse(text.contains("ScrollHitRule"), "the travel-gated rule must not come back")
+        XCTAssertTrue(text.contains("No Home, End, or arrow key is posted"))
         XCTAssertFalse(text.contains("A wheel event is not used for an edge"))
-        XCTAssertTrue(text.contains("contains the pointer"))
-        XCTAssertTrue(text.contains("isFocusContainer"))
         XCTAssertFalse(text.contains("case right"))
         XCTAssertFalse(text.contains("rightMouse"))
+        for token in ["import AppKit", "import CoreGraphics", "CGEvent", "AXUIElement", "URLSession", "print("] {
+            XCTAssertFalse(rule.contains(token), token)
+        }
         for token in ["import AppKit", "import CoreGraphics", "CGEvent", "AXUIElement", "URLSession", "print("] {
             XCTAssertFalse(text.contains(token), token)
         }
