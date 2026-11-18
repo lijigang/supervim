@@ -74,8 +74,12 @@ final class LiveBenchmarkTests: XCTestCase {
             }
             images.append(image)
         }
-        // The first request loads the recognition model. It is not counted.
-        _ = SystemVisionHints.recognize(images[1])
+        // The first request loads the recognition model. It is not counted
+        // with the others; it is what the first `f` in WeChat pays.
+        let first = Self.milliseconds {
+            _ = SystemVisionHints.recognize(images[1])
+        }
+        print("BENCH vision first-request image=\(images[1].width)x\(images[1].height) ms=\(Self.text(first))")
         var samples = [[Double]](repeating: [], count: sizes.count)
         var lines = [Int](repeating: 0, count: sizes.count)
         for _ in 0..<3 {
