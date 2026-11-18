@@ -85,6 +85,13 @@ final class LiveEventTapTests: XCTestCase {
         let shifted = strings(shift: true)
         XCTAssertEqual(plain.main, plain.background)
         XCTAssertEqual(shifted.main, shifted.background)
+        let madeOffMain: String = reading.sync {
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0x03, keyDown: true) else {
+                return "<none>"
+            }
+            return keyboardString(of: event)
+        }
+        XCTAssertEqual(madeOffMain, plain.main)
 
         var carried = "<none>"
         var carriedOnTap = "<none>"
@@ -101,9 +108,55 @@ final class LiveEventTapTests: XCTestCase {
         }
         print(
             "BENCH tap string plain_main=\(plain.main) plain_background=\(plain.background) "
+                + "made_off_main=\(madeOffMain) "
                 + "shift_main=\(shifted.main) shift_background=\(shifted.background) "
                 + "posted_on_tap=\(first.record.unicode) set_main=\(carried) set_on_tap=\(carriedOnTap)"
         )
+
+        // The same two posted keys, `f` and Shift-`f`, seen by a second tap
+        // on the main run loop, which is where v0.1.4 read them, and by the
+        // session's tap on its own thread.
+        let probe = MainTapProbe()
+        if let port = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(1) << CGEventMask(CGEventType.keyDown.rawValue),
+            callback: mainTapProbeCallback,
+            userInfo: Unmanaged.passUnretained(probe).toOpaque()
+        ), let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0) {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            CGEvent.tapEnable(tap: port, enable: true)
+            keys.drain()
+            posting.async {
+                poster.post(.shortcut(KeyCombo("f", modifiers: [])))
+                poster.post(.shortcut(KeyCombo("f", modifiers: [.shift])))
+            }
+            var onMainLoop: [MainTapProbe.Seen] = []
+            let deadline = Date().addingTimeInterval(3)
+            while onMainLoop.count < 2, Date() < deadline {
+                _ = CFRunLoopRunInMode(.defaultMode, 0.05, true)
+                onMainLoop += probe.take()
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+            let onTapThread = keys.takeAll()
+            CGEvent.tapEnable(tap: port, enable: false)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            CFMachPortInvalidate(port)
+            keys.drain()
+            print(
+                "BENCH tap posted f and shift-f main_loop_tap=\(onMainLoop.map(\.string)) "
+                    + "main_loop_tap_on_main=\(onMainLoop.map { $0.onMain ? 1 : 0 }) "
+                    + "tap_thread=\(onTapThread.map(\.record.unicode)) "
+                    + "tap_thread_flags=\(onTapThread.map { $0.record.modifierFlags & SystemModifierMask.shift != 0 ? "shift" : "none" })"
+            )
+            if onMainLoop.count == 2, onTapThread.count == 2 {
+                XCTAssertEqual(onTapThread.map(\.record.unicode), onMainLoop.map(\.string))
+            }
+        } else {
+            print("BENCH tap posted f and shift-f main_loop_tap=<not installed>")
+        }
+        withExtendedLifetime(probe) {}
 
         // Switched off by a call, the way macOS does it. macOS may tell the
         // callback; if it does not, only the watchdog can find out.
@@ -165,6 +218,44 @@ final class LiveEventTapTests: XCTestCase {
     }
 }
 
+private final class MainTapProbe: @unchecked Sendable {
+    struct Seen {
+        var string: String
+        var onMain: Bool
+    }
+
+    private let lock = NSLock()
+    private var seen: [Seen] = []
+
+    func record(_ string: String, onMain: Bool) {
+        lock.lock()
+        seen.append(Seen(string: string, onMain: onMain))
+        lock.unlock()
+    }
+
+    func take() -> [Seen] {
+        lock.lock()
+        defer { lock.unlock() }
+        let all = seen
+        seen = []
+        return all
+    }
+}
+
+private func mainTapProbeCallback(
+    proxy: CGEventTapProxy,
+    type: CGEventType,
+    event: CGEvent,
+    userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    if type == .keyDown, let userInfo,
+       event.getIntegerValueField(.eventSourceUserData) == SynthesizedEventMark.userData {
+        let probe = Unmanaged<MainTapProbe>.fromOpaque(userInfo).takeUnretainedValue()
+        probe.record(keyboardString(of: event), onMain: Thread.isMainThread)
+    }
+    return Unmanaged.passUnretained(event)
+}
+
 private final class HeldEvent: @unchecked Sendable {
     let event: CGEvent
 
@@ -191,6 +282,14 @@ private final class RecordedKeys: SystemKeyHandling, @unchecked Sendable {
         lock.lock()
         stall = seconds
         lock.unlock()
+    }
+
+    func takeAll() -> [Seen] {
+        lock.lock()
+        defer { lock.unlock() }
+        let all = seen
+        seen = []
+        return all
     }
 
     /// Forgets what arrived so far.
