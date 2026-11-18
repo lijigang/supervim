@@ -1,8 +1,20 @@
 import Foundation
 
-/// Frontmost bundle id supplied by the app. An empty string means it could not be named.
+/// The app `Add Frontmost App` would exclude, supplied by the app.
+///
+/// This is the app the user was in before the settings window, not the app
+/// in front at the time of the click: by then that is Supervim.
+/// An empty bundle id means no such app is known. The name is for display
+/// and may be empty.
 public protocol FrontmostBundleProviding: Sendable {
     func frontmostBundleIdentifier() -> String
+    func frontmostApplicationName() -> String
+}
+
+extension FrontmostBundleProviding {
+    public func frontmostApplicationName() -> String {
+        ""
+    }
 }
 
 public enum MenuCommandKind: Equatable, Sendable {
@@ -87,18 +99,23 @@ public final class MenuBarController<Clock: KeyTimeSource>: @unchecked Sendable 
     private let repository: SettingsRepository
     private let interpreter: EventInterpreter<Clock>
     private let frontmost: any FrontmostBundleProviding
+    private let ownBundleIdentifier: String
     private var lastSaved: Settings
     private var settingsVisible = false
     private var notice = ""
 
+    /// `ownBundleIdentifier` is Supervim's own. It is never added to the
+    /// exclusion list, whatever `frontmost` reports.
     public init(
         repository: SettingsRepository,
         clock: Clock,
-        frontmost: any FrontmostBundleProviding
+        frontmost: any FrontmostBundleProviding,
+        ownBundleIdentifier: String = ""
     ) throws {
         let loaded = try repository.load()
         self.repository = repository
         self.frontmost = frontmost
+        self.ownBundleIdentifier = ownBundleIdentifier
         self.interpreter = EventInterpreter(settings: loaded, clock: clock, cache: .unknown)
         self.lastSaved = loaded
     }
@@ -131,17 +148,17 @@ public final class MenuBarController<Clock: KeyTimeSource>: @unchecked Sendable 
     public func editor() -> ExclusionEditor {
         let settings = interpreter.settingsSnapshot()
         let raw = frontmost.frontmostBundleIdentifier()
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let canAdd = !trimmed.isEmpty && !settings.isExcluded(bundleIdentifier: trimmed)
+        let target = addTarget()
+        let canAdd = target.map { !settings.isExcluded(bundleIdentifier: $0.bundleIdentifier) } ?? false
         return ExclusionEditor(
             bundleIdentifiers: settings.excludedBundleIdentifiers,
             launchAtLogin: settings.launchAtLogin,
             frontmostBundleIdentifier: raw,
             canAddFrontmost: canAdd,
-            notice: notice,
+            notice: notice.isEmpty && target == nil ? Self.noOtherAppNotice : notice,
             isVisible: settingsVisible,
             windowTitle: "Settings",
-            addButtonTitle: "Add Frontmost App",
+            addButtonTitle: target.map { "Add \"\($0.name)\"" } ?? "Add Frontmost App",
             removeButtonTitle: "Remove",
             launchAtLoginTitle: "Launch at Login"
         )
@@ -175,10 +192,9 @@ public final class MenuBarController<Clock: KeyTimeSource>: @unchecked Sendable 
     }
 
     public func addFrontmost() throws -> ExclusionEditor {
-        let trimmed = frontmost.frontmostBundleIdentifier()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            notice = "Frontmost app has no bundle identifier."
+        guard let trimmed = addTarget()?.bundleIdentifier else {
+            // `editor()` says what to do for as long as no app is known.
+            notice = ""
             return editor()
         }
         let current = interpreter.settingsSnapshot()
@@ -224,6 +240,23 @@ public final class MenuBarController<Clock: KeyTimeSource>: @unchecked Sendable 
     public func reportNotice(_ text: String) -> ExclusionEditor {
         notice = text
         return editor()
+    }
+
+    private static var noOtherAppNotice: String {
+        "Switch to the app you want to exclude, then come back here."
+    }
+
+    /// The app the add button would exclude. Nil when none is known or when
+    /// the one reported is Supervim. The name falls back to the bundle id.
+    private func addTarget() -> (bundleIdentifier: String, name: String)? {
+        let bundle = frontmost.frontmostBundleIdentifier()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if bundle.isEmpty || BundleIdentity.matches(bundle, ownBundleIdentifier) {
+            return nil
+        }
+        let name = frontmost.frontmostApplicationName()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (bundle, name.isEmpty ? bundle : name)
     }
 
     private func commit(_ settings: Settings) throws {

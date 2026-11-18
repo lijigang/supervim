@@ -13,7 +13,7 @@ final class MenuBarControllerTests: XCTestCase {
         XCTAssertFalse(editor.isVisible)
         XCTAssertEqual(editor.notice, "")
         XCTAssertEqual(editor.windowTitle, "Settings")
-        XCTAssertEqual(editor.addButtonTitle, "Add Frontmost App")
+        XCTAssertEqual(editor.addButtonTitle, "Add \"com.apple.Safari\"")
         XCTAssertEqual(editor.removeButtonTitle, "Remove")
         XCTAssertEqual(editor.launchAtLoginTitle, "Launch at Login")
         XCTAssertEqual(editor.frontmostBundleIdentifier, "com.apple.Safari")
@@ -226,7 +226,7 @@ final class MenuBarControllerTests: XCTestCase {
         XCTAssertFalse(fixture.session.editor().canAddFrontmost)
         let blank = try fixture.session.addFrontmost()
         XCTAssertEqual(blank.bundleIdentifiers, Settings.defaultExcludedBundleIdentifiers)
-        XCTAssertEqual(blank.notice, "Frontmost app has no bundle identifier.")
+        XCTAssertEqual(blank.notice, "Switch to the app you want to exclude, then come back here.")
 
         fixture.frontmost.bundleIdentifier = "NotABundle"
         XCTAssertTrue(fixture.session.editor().canAddFrontmost)
@@ -234,6 +234,60 @@ final class MenuBarControllerTests: XCTestCase {
         XCTAssertEqual(invalid.bundleIdentifiers, Settings.defaultExcludedBundleIdentifiers)
         XCTAssertEqual(invalid.notice, "That bundle identifier cannot be saved.")
         XCTAssertNil(try fixture.store.read())
+    }
+
+    func testSupervimItselfIsNeverAdded() throws {
+        // What the app reported once the settings window was in front.
+        let fixture = try makeMenu(frontmost: "com.lijigang.supervim", own: "com.lijigang.supervim")
+        fixture.frontmost.name = "Supervim"
+        let editor = fixture.session.editor()
+        XCTAssertFalse(editor.canAddFrontmost)
+        XCTAssertEqual(editor.addButtonTitle, "Add Frontmost App")
+        XCTAssertEqual(editor.notice, "Switch to the app you want to exclude, then come back here.")
+
+        let refused = try fixture.session.addFrontmost()
+        XCTAssertEqual(refused.bundleIdentifiers, Settings.defaultExcludedBundleIdentifiers)
+        XCTAssertEqual(refused.notice, "Switch to the app you want to exclude, then come back here.")
+        XCTAssertNil(try fixture.store.read())
+
+        fixture.frontmost.bundleIdentifier = "  COM.lijigang.Supervim "
+        XCTAssertFalse(fixture.session.editor().canAddFrontmost)
+        let otherCase = try fixture.session.addFrontmost()
+        XCTAssertEqual(otherCase.bundleIdentifiers, Settings.defaultExcludedBundleIdentifiers)
+        XCTAssertNil(try fixture.store.read())
+    }
+
+    func testWithNoOtherAppKnownTheEditorSaysWhatToDo() throws {
+        let fixture = try makeMenu(frontmost: "")
+        let editor = fixture.session.editor()
+        XCTAssertFalse(editor.canAddFrontmost)
+        XCTAssertEqual(editor.addButtonTitle, "Add Frontmost App")
+        XCTAssertEqual(editor.notice, "Switch to the app you want to exclude, then come back here.")
+
+        let refused = try fixture.session.addFrontmost()
+        XCTAssertEqual(refused.bundleIdentifiers, Settings.defaultExcludedBundleIdentifiers)
+        XCTAssertEqual(refused.notice, "Switch to the app you want to exclude, then come back here.")
+        XCTAssertNil(try fixture.store.read())
+
+        fixture.frontmost.bundleIdentifier = "com.example.Notes"
+        let known = fixture.session.editor()
+        XCTAssertTrue(known.canAddFrontmost)
+        XCTAssertEqual(known.notice, "")
+    }
+
+    func testAddButtonNamesTheAppItWillAdd() throws {
+        let fixture = try makeMenu(frontmost: "com.tencent.xinWeChat")
+        fixture.frontmost.name = "  WeChat "
+        XCTAssertEqual(fixture.session.editor().addButtonTitle, "Add \"WeChat\"")
+
+        fixture.frontmost.name = "   "
+        XCTAssertEqual(fixture.session.editor().addButtonTitle, "Add \"com.tencent.xinWeChat\"")
+
+        fixture.frontmost.name = "WeChat"
+        let added = try fixture.session.addFrontmost()
+        XCTAssertTrue(added.bundleIdentifiers.contains("com.tencent.xinWeChat"))
+        XCTAssertFalse(added.canAddFrontmost)
+        XCTAssertEqual(added.addButtonTitle, "Add \"WeChat\"")
     }
 
     func testLaunchAtLoginPreferenceTogglesWithoutChangingPauseOrTimeout() throws {
@@ -350,7 +404,8 @@ private struct MenuFixture {
 
 private func makeMenu(
     settings: Settings? = nil,
-    frontmost bundleIdentifier: String = "com.apple.Safari"
+    frontmost bundleIdentifier: String = "com.apple.Safari",
+    own ownBundleIdentifier: String = ""
 ) throws -> MenuFixture {
     let store = InMemorySettingsStore()
     let repository = SettingsRepository(store: store)
@@ -361,7 +416,8 @@ private func makeMenu(
     let session = try MenuBarController(
         repository: repository,
         clock: ManualKeyClock(),
-        frontmost: frontmost
+        frontmost: frontmost,
+        ownBundleIdentifier: ownBundleIdentifier
     )
     return MenuFixture(
         repository: repository,
@@ -422,6 +478,7 @@ private func assertRunningMenu(
 
 private final class FixedFrontmost: FrontmostBundleProviding, @unchecked Sendable {
     var bundleIdentifier: String
+    var name = ""
 
     init(bundleIdentifier: String) {
         self.bundleIdentifier = bundleIdentifier
@@ -429,5 +486,9 @@ private final class FixedFrontmost: FrontmostBundleProviding, @unchecked Sendabl
 
     func frontmostBundleIdentifier() -> String {
         bundleIdentifier
+    }
+
+    func frontmostApplicationName() -> String {
+        name
     }
 }
