@@ -103,7 +103,7 @@ private final class ChromeRuleView: NSView {
             dark ? ChromePalette.darkStroke : ChromePalette.lightStroke,
             alpha: dark ? 0.12 : 0.1
         ).setFill()
-        NSRect(x: 12, y: 0, width: max(bounds.width - 12, 0), height: 1).fill()
+        NSRect(x: 12, y: 0, width: max(bounds.width - 24, 0), height: 1).fill()
     }
 }
 

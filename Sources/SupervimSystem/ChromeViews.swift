@@ -381,26 +381,15 @@ private final class HelpCanvas: NSView {
         rule.lineWidth = contrast ? 1.5 : 1
         rule.stroke()
 
-        // One key cap width per column of the sheet, so the descriptions
-        // in a column start on the same line.
-        var keyColumns: [Double: CGFloat] = [:]
-        for section in sheetLayout.sections {
-            for row in section.rows {
-                let width = capWidth(row.keys, font: fonts.cap, limit: CGFloat(row.frame.width) * 0.46)
-                keyColumns[row.frame.x] = max(keyColumns[row.frame.x] ?? 0, width)
-            }
-        }
-
         for section in sheetLayout.sections {
             drawHeader(section, palette: palette, fonts: fonts)
+            // One key cap width per section, so its descriptions start on
+            // the same line and a wide key elsewhere does not push them out.
+            let keyColumn = section.rows
+                .map { capWidth($0.keys, font: fonts.cap, limit: CGFloat($0.frame.width) * 0.46) }
+                .max() ?? 26
             for row in section.rows {
-                drawRow(
-                    row,
-                    keyColumn: keyColumns[row.frame.x] ?? 26,
-                    palette: palette,
-                    fonts: fonts,
-                    contrast: contrast
-                )
+                drawRow(row, keyColumn: keyColumn, palette: palette, fonts: fonts, contrast: contrast)
             }
         }
 
