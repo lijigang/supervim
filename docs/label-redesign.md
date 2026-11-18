@@ -58,7 +58,7 @@ Sizes are the body without the clear shadow margin, measured with the real fonts
 
 挂在下面有一个真问题：紧凑的列表里，一行的下面就是下一行，标签会被看成下一行的。所以规则是：**下面没有别的可点目标时才挂在下面；否则标签落在自己目标的起始处，不画尖。** 包住这个目标的大目标（比如一行里的按钮，行本身也是目标）不算「别的」。键入前缀以后，剩下的标签按整次扫描的目标来判断，所以不会因为邻居消失而跳位置。
 
-结果是同一屏上有两种位置：工具栏、导航、标签页签、聊天行里的标签带尖，列表中间几行和下面紧挨着输入框的一排图标上的标签不带尖、压在目标上（这时图标同样被盖住）。预览图里浏览器侧栏的六行就是这样：前五行压在行首，最后一行下面是空的，挂在下面。
+结果是同一屏上有两种位置：工具栏、导航链接、文章下面的 tag、聊天行里的标签带尖，列表中间几行和下面紧挨着输入框的一排图标上的标签不带尖、压在目标上（这时图标同样被盖住）。预览图里浏览器侧栏的六行就是这样：前五行压在行首，最后一行下面是空的，挂在下面。
 
 **Corner (A, C).** The label lies on the target's top-left corner as in v0.1.5; its frame does not move. The body's top-left corner is not rounded but drawn out to a point that lands exactly on the target's corner. The label is always on its own target, so a dense list cannot be misread. The cost is that a small icon is covered, and in a list with a 22pt pitch the point of one label overlaps the bottom-left of the label above it (see the "after Z" rows of the comparison).
 
