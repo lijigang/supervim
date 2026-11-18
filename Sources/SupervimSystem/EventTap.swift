@@ -106,6 +106,14 @@ public enum SystemKeyTranslation {
         0x31: " ", 0x32: "`",
     ]
 
+    /// US ANSI: what Shift makes of an unshifted character that is not a letter.
+    private static let shiftedSymbols: [Character: Character] = [
+        "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^",
+        "7": "&", "8": "*", "9": "(", "0": ")", "-": "_", "=": "+",
+        "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"",
+        ",": "<", ".": ">", "/": "?", "`": "~",
+    ]
+
     private static let escapeKeyCode: UInt16 = 0x35
 
     public static func virtualKeyCode(forUnshifted character: Character) -> UInt16? {
@@ -138,10 +146,20 @@ public enum SystemKeyTranslation {
         if let character = plainCharacter(record.unicode) {
             return KeyEvent(character, modifiers: modifiers)
         }
+        // No usable string came with the event. `F`, `G` and `?` are told
+        // from `f`, `g` and `/` by their character, so Shift is applied here.
         if let character = unshifted[record.keyCode] {
-            return KeyEvent(character, modifiers: modifiers)
+            let typed = modifiers.contains(.shift) ? shifted(character) : character
+            return KeyEvent(typed, modifiers: modifiers)
         }
         return KeyEvent(identity: .unnamed, modifiers: modifiers)
+    }
+
+    private static func shifted(_ character: Character) -> Character {
+        if let symbol = shiftedSymbols[character] {
+            return symbol
+        }
+        return character.isLetter ? Character(character.uppercased()) : character
     }
 
     private static func modifiers(from flags: UInt64) -> KeyModifiers {

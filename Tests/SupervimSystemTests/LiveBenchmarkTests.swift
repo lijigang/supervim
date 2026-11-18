@@ -2,6 +2,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import Vision
 import XCTest
 @testable import SupervimCore
 @testable import SupervimSystem
@@ -65,7 +66,7 @@ final class LiveBenchmarkTests: XCTestCase {
         }
         let points = CGSize(width: 1_400, height: 900)
         let capped = VisionCaptureSizing.scale(width: 1_400, height: 900, backingScale: 2)
-        let sizes: [(String, Double)] = [("v0.1.4-every-pixel", 2), ("capped", capped)]
+        let sizes: [(String, Double)] = [("v0.1.4-every-pixel", 2), ("capped", capped), ("one-per-point", 1)]
         var images: [CGImage] = []
         for size in sizes {
             guard let image = Self.chatImage(points: points, scale: size.1) else {
@@ -88,6 +89,28 @@ final class LiveBenchmarkTests: XCTestCase {
             print(
                 "BENCH vision recognize=\(sizes[index].0) image=\(images[index].width)x\(images[index].height) "
                     + "text_lines=\(lines[index]) drawn_lines=\(Self.chatLineCount) \(Self.summary(samples[index]))"
+            )
+        }
+
+        // Not used by the app. The app only needs where the text is, not
+        // what it says; this is what finding the regions alone costs.
+        for index in sizes.indices {
+            var regions = 0
+            var detect: [Double] = []
+            for round in 0..<4 {
+                let took = Self.milliseconds {
+                    let request = VNDetectTextRectanglesRequest()
+                    let handler = VNImageRequestHandler(cgImage: images[index], options: [:])
+                    try? handler.perform([request])
+                    regions = request.results?.count ?? 0
+                }
+                if round > 0 {
+                    detect.append(took)
+                }
+            }
+            print(
+                "BENCH vision regions-only=\(sizes[index].0) image=\(images[index].width)x\(images[index].height) "
+                    + "regions=\(regions) drawn_lines=\(Self.chatLineCount) \(Self.summary(detect))"
             )
         }
     }

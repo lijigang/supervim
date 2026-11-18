@@ -66,12 +66,51 @@ final class LiveEventTapTests: XCTestCase {
                 + "max=\(Self.text(trips[trips.count - 1]))"
         )
 
-        // Switched off with no notice: only the watchdog can find out.
+        // The string a key event carries, read on the main thread, on
+        // another thread, and by the tap on its own thread. v0.1.4 read it
+        // on the main thread only; the three must agree.
+        let reading = DispatchQueue(label: "supervim.test.read")
+        func strings(shift: Bool) -> (main: String, background: String) {
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0x03, keyDown: true) else {
+                return ("<none>", "<none>")
+            }
+            if shift {
+                event.flags = .maskShift
+            }
+            let onMain = keyboardString(of: event)
+            let offMain = reading.sync { keyboardString(of: event) }
+            return (onMain, offMain)
+        }
+        let plain = strings(shift: false)
+        let shifted = strings(shift: true)
+        XCTAssertEqual(plain.main, plain.background)
+        XCTAssertEqual(shifted.main, shifted.background)
+
+        var carried = "<none>"
+        var carriedOnTap = "<none>"
+        if let event = CGEvent(keyboardEventSource: nil, virtualKey: 0x03, keyDown: true) {
+            let units = Array("é".utf16)
+            event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+            event.setIntegerValueField(.eventSourceUserData, value: SynthesizedEventMark.userData)
+            carried = keyboardString(of: event)
+            let held = HeldEvent(event)
+            let seen = keys.next(after: { posting.async { held.event.post(tap: .cghidEventTap) } }, timeout: 5)
+            carriedOnTap = seen?.record.unicode ?? "<none>"
+            XCTAssertEqual(seen?.record.keyCode, 0x03)
+            XCTAssertEqual(carriedOnTap, carried)
+        }
+        print(
+            "BENCH tap string plain_main=\(plain.main) plain_background=\(plain.background) "
+                + "shift_main=\(shifted.main) shift_background=\(shifted.background) "
+                + "posted_on_tap=\(first.record.unicode) set_main=\(carried) set_on_tap=\(carriedOnTap)"
+        )
+
+        // Switched off by a call, the way macOS does it. macOS may tell the
+        // callback; if it does not, only the watchdog can find out.
         var revivedAfter = -1.0
         var afterRevival: RecordedKeys.Seen?
         let watchdogLines = ModeTrace.capture {
             session.switchOffAsTheSystemDoes()
-            XCTAssertFalse(session.isTapEnabled)
             let started = DispatchTime.now().uptimeNanoseconds
             while Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000 < 3_000 {
                 if session.isTapEnabled {
@@ -82,15 +121,16 @@ final class LiveEventTapTests: XCTestCase {
             }
             afterRevival = keys.next(after: post, timeout: 5)
         }
-        XCTAssertTrue(session.isTapEnabled, "the watchdog must turn the tap back on")
+        XCTAssertTrue(session.isTapEnabled, "the tap must be on again")
         XCTAssertGreaterThanOrEqual(revivedAfter, 0)
         XCTAssertLessThan(revivedAfter, 1_500)
-        XCTAssertTrue(
-            watchdogLines.contains("tap-disabled reason=watchdog reenabled=1"),
-            "\(watchdogLines)"
-        )
+        let revivals = watchdogLines.filter { $0.hasPrefix("tap-disabled") && $0.hasSuffix("reenabled=1") }
+        XCTAssertFalse(revivals.isEmpty, "\(watchdogLines)")
         XCTAssertNotNil(afterRevival, "a key after the revival must reach the tap")
-        print("BENCH tap watchdog revived_after_ms=\(Self.text(revivedAfter))")
+        print(
+            "BENCH tap switched_off revived_after_ms=\(Self.text(revivedAfter)) "
+                + "notices=\(watchdogLines.filter { $0.hasPrefix("tap-disabled") })"
+        )
 
         // A callback that takes three seconds, with more keys arriving
         // meanwhile. Whether macOS switches the tap off for this is its
@@ -113,13 +153,23 @@ final class LiveEventTapTests: XCTestCase {
                 + "reasons=\(notices.map { $0.replacingOccurrences(of: "tap-disabled ", with: "") }) "
                 + "handled_after=\(afterStall == nil ? 0 : 1)"
         )
+        // While the callback is still stuck macOS may switch the tap off
+        // again at once, so a notice can say `reenabled=0`. The watchdog
+        // asks again half a second later.
         XCTAssertNotNil(afterStall, "a key after a slow callback must still reach the tap")
         XCTAssertTrue(session.isTapEnabled)
-        XCTAssertTrue(notices.allSatisfy { $0.hasSuffix("reenabled=1") }, "\(notices)")
     }
 
     private static func text(_ value: Double) -> String {
         String(format: "%.2f", value)
+    }
+}
+
+private final class HeldEvent: @unchecked Sendable {
+    let event: CGEvent
+
+    init(_ event: CGEvent) {
+        self.event = event
     }
 }
 

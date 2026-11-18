@@ -247,14 +247,7 @@ private extension SystemKeyRecord {
         default:
             kind = .other
         }
-        var units = [UniChar](repeating: 0, count: 4)
-        var length = 0
-        event.keyboardGetUnicodeString(
-            maxStringLength: units.count,
-            actualStringLength: &length,
-            unicodeString: &units
-        )
-        let unicode = length > 0 ? String(utf16CodeUnits: units, count: length) : ""
+        let unicode = keyboardString(of: event)
         let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
         let userData = event.getIntegerValueField(.eventSourceUserData)
         self.init(
@@ -265,6 +258,19 @@ private extension SystemKeyRecord {
             sourceUserData: userData
         )
     }
+}
+
+/// The characters the event carries. Empty when it carries none; the key
+/// code is used then.
+func keyboardString(of event: CGEvent) -> String {
+    var units = [UniChar](repeating: 0, count: 4)
+    var length = 0
+    event.keyboardGetUnicodeString(
+        maxStringLength: units.count,
+        actualStringLength: &length,
+        unicodeString: &units
+    )
+    return length > 0 ? String(utf16CodeUnits: units, count: length) : ""
 }
 
 private func supervimEventTapCallback(

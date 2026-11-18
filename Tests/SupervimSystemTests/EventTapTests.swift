@@ -191,6 +191,23 @@ final class EventTapTests: XCTestCase {
         XCTAssertEqual(event, KeyEvent("j"))
     }
 
+    func testAKeyWithNoUnicodeStringIsReadFromTheUSLayoutWithShift() {
+        func event(_ keyCode: UInt16, shift: Bool) -> KeyEvent? {
+            SystemKeyTranslation.keyEvent(
+                from: keyRecord(keyCode: keyCode, flags: shift ? SystemModifierMask.shift : 0, unicode: "")
+            )
+        }
+        XCTAssertEqual(event(0x03, shift: false), KeyEvent("f"))
+        XCTAssertEqual(event(0x03, shift: true), KeyEvent("F", modifiers: .shift))
+        XCTAssertEqual(event(0x05, shift: true), KeyEvent("G", modifiers: .shift))
+        XCTAssertEqual(event(0x26, shift: true), KeyEvent("J", modifiers: .shift))
+        XCTAssertEqual(event(0x2C, shift: false), KeyEvent("/"))
+        XCTAssertEqual(event(0x2C, shift: true), KeyEvent("?", modifiers: .shift))
+        XCTAssertEqual(event(0x1E, shift: true), KeyEvent("}", modifiers: .shift))
+        XCTAssertEqual(event(0x12, shift: true), KeyEvent("!", modifiers: .shift))
+        XCTAssertEqual(event(0x31, shift: true), KeyEvent(" ", modifiers: .shift))
+    }
+
     func testModifiedKeysUseTheUnshiftedVirtualKey() {
         let flags = SystemModifierMask.control | SystemModifierMask.option
         let event = SystemKeyTranslation.keyEvent(from: keyRecord(keyCode: 0x09, flags: flags, unicode: "√"))
