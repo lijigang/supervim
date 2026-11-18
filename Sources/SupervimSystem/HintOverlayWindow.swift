@@ -8,14 +8,29 @@ import SupervimCore
 /// Mouse events pass through. Hint coordinates stay in the space the markers
 /// already use. This file does not convert them. Help text is centered on the
 /// main screen when one exists. Placement on a real display is not measured here.
+///
+/// The caller is the key hook or the scan queue. It is never made to wait:
+/// the drawing is queued on the main thread and the call returns. When
+/// several label updates are queued, only the newest is drawn.
+///
+/// Each screen has one panel and one canvas view, made once and kept. A
+/// keystroke gives the canvas a new list of labels and redraws it. Nothing
+/// is hidden and shown again in between, so the labels do not flicker.
 public final class NonActivatingHintPanel: OverlayPresenting, HelpPresenting, @unchecked Sendable {
+    private let tickets = OverlayTickets()
+
     public init() {}
 
     public func present(_ presentation: OverlayPresentation) {
         let markers = presentation.markers
         let typedPrefix = presentation.typedPrefix
-        PanelDispatch.perform { holder in
-            holder.show(markers, typedPrefix: typedPrefix)
+        let ticket = tickets.next()
+        let asked = TraceStopwatch()
+        PanelDispatch.perform { [tickets] holder in
+            guard tickets.isNewest(ticket) else {
+                return
+            }
+            holder.show(markers, typedPrefix: typedPrefix, queuedMilliseconds: asked.milliseconds)
         }
     }
 
@@ -31,25 +46,56 @@ public final class NonActivatingHintPanel: OverlayPresenting, HelpPresenting, @u
     }
 
     public func hideOverlay() {
+        _ = tickets.next()
         PanelDispatch.perform { holder in
             holder.hideAll()
         }
     }
+
+    /// Makes the first panel and draws one label off screen. The first `f`
+    /// after launch then finds the window, the font and the glyphs ready.
+    public func prewarm() {
+        PanelDispatch.later { holder in
+            holder.prewarm()
+        }
+    }
+}
+
+/// Numbers the label updates so a queued one can tell it has been replaced.
+private final class OverlayTickets: @unchecked Sendable {
+    private let lock = NSLock()
+    private var newest = 0
+
+    func next() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        newest += 1
+        return newest
+    }
+
+    func isNewest(_ ticket: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return ticket == newest
+    }
 }
 
 private enum PanelDispatch {
-    /// The operation is not stored. A stored closure is escaping, and the
-    /// caller’s panel update is not.
-    static func perform(_ body: @MainActor (PanelHolder) -> Void) {
+    /// Runs now on the main thread, and otherwise queues there and returns.
+    static func perform(_ body: @escaping @MainActor @Sendable (PanelHolder) -> Void) {
         if Thread.isMainThread {
             MainActor.assumeIsolated {
                 body(PanelRegistry.shared.current())
             }
         } else {
-            DispatchQueue.main.sync {
-                MainActor.assumeIsolated {
-                    body(PanelRegistry.shared.current())
-                }
+            later(body)
+        }
+    }
+
+    static func later(_ body: @escaping @MainActor @Sendable (PanelHolder) -> Void) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                body(PanelRegistry.shared.current())
             }
         }
     }
@@ -74,6 +120,8 @@ private final class PanelRegistry {
 private final class PanelHolder {
     let panel: NSPanel
     private var hintPanels: [NSPanel] = []
+    private var canvases: [HintCanvasView] = []
+    private var sizes: [String: NSSize] = [:]
 
     init() {
         panel = Self.makePanel()
@@ -81,8 +129,15 @@ private final class PanelHolder {
 
     func hideAll() {
         panel.orderOut(nil)
-        for hintPanel in hintPanels {
-            hintPanel.orderOut(nil)
+        hideHints(from: 0)
+    }
+
+    private func hideHints(from first: Int) {
+        for index in hintPanels.indices where index >= first {
+            if hintPanels[index].isVisible {
+                hintPanels[index].orderOut(nil)
+            }
+            canvases[index].replace([], typedPrefix: "")
         }
     }
 
@@ -106,7 +161,42 @@ private final class PanelHolder {
         return panel
     }
 
-    func show(_ markers: [HintMarker], typedPrefix: String = "") {
+    private func ensureHintPanels(_ count: Int) {
+        while hintPanels.count < count {
+            let created = Self.makePanel()
+            let canvas = HintCanvasView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+            canvas.autoresizingMask = [.width, .height]
+            created.contentView = canvas
+            hintPanels.append(created)
+            canvases.append(canvas)
+        }
+    }
+
+    private func badgeSize(_ label: String) -> NSSize {
+        if let known = sizes[label] {
+            return known
+        }
+        if sizes.count > 4_000 {
+            sizes.removeAll(keepingCapacity: true)
+        }
+        let measured = HintBadgePainter.size(for: label)
+        sizes[label] = measured
+        return measured
+    }
+
+    func prewarm() {
+        ensureHintPanels(1)
+        let size = badgeSize("AS")
+        let canvas = HintCanvasView(frame: NSRect(origin: .zero, size: size))
+        canvas.replace([HintCanvasView.Badge(label: "AS", frame: canvas.bounds)], typedPrefix: "a")
+        if let bitmap = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds) {
+            canvas.cacheDisplay(in: canvas.bounds, to: bitmap)
+        }
+    }
+
+    func show(_ markers: [HintMarker], typedPrefix: String = "", queuedMilliseconds: Double = 0) {
+        let watch = TraceStopwatch()
+        let tracing = ModeTrace.isEnabled
         let screens = NSScreen.screens.map { screen in
             DisplayFrame(
                 x: screen.frame.origin.x,
@@ -116,14 +206,15 @@ private final class PanelHolder {
                 backingScale: Double(screen.backingScaleFactor)
             )
         }
-        for (index, screen) in screens.enumerated() {
-            ModeTrace.noteLine(ModeTrace.formatHintPlace(screen: screen, index: index))
+        if tracing {
+            for (index, screen) in screens.enumerated() {
+                ModeTrace.noteLine(ModeTrace.formatHintPlace(screen: screen, index: index))
+            }
         }
-        struct Drawn {
-            var field: HintBadgeView
-            var label: HintRect
-        }
-        var drawn: [Drawn] = []
+        var texts: [String] = []
+        var labels: [HintRect] = []
+        texts.reserveCapacity(markers.count)
+        labels.reserveCapacity(markers.count)
         for marker in markers {
             let element = HintRect(
                 x: marker.anchor.x,
@@ -131,69 +222,75 @@ private final class PanelHolder {
                 width: marker.elementWidth,
                 height: marker.elementHeight
             )
-            let badge = HintBadgeView(label: marker.text, typedPrefix: typedPrefix)
-            let size = badge.badgeSize
-            let width = Double(size.width)
-            let height = Double(size.height)
+            let size = badgeSize(marker.text)
             guard let placed = HintGeometry.labelRect(
                 element: element,
-                badgeWidth: width,
-                badgeHeight: height,
+                badgeWidth: Double(size.width),
+                badgeHeight: Double(size.height),
                 screens: screens
             ) else {
                 continue
             }
-            ModeTrace.noteLine(ModeTrace.formatHintLabel(index: marker.index, ax: element, ns: placed))
-            drawn.append(Drawn(field: badge, label: placed))
-        }
-        let nudged = HintGeometry.nudge(drawn.map(\.label))
-        for index in drawn.indices where nudged.indices.contains(index) {
-            drawn[index].label = nudged[index]
-        }
-        let groups = HintGeometry.panels(labels: drawn.map(\.label), screens: screens)
-        hideAll()
-        guard !groups.isEmpty else {
-            return
-        }
-        while hintPanels.count < groups.count {
-            hintPanels.append(Self.makePanel())
-        }
-        for (group, hintPanel) in zip(groups, hintPanels) {
-            let content = NSView(frame: .zero)
-            for item in group.items where drawn.indices.contains(item.sourceIndex) {
-                let field = drawn[item.sourceIndex].field
-                let local = item.local
-                field.frame = NSRect(
-                    x: CGFloat(local.x),
-                    y: CGFloat(local.y),
-                    width: CGFloat(local.width),
-                    height: CGFloat(local.height)
-                )
-                content.addSubview(field)
+            if tracing {
+                ModeTrace.noteLine(ModeTrace.formatHintLabel(index: marker.index, ax: element, ns: placed))
             }
-            let frame = group.frame
-            content.frame = NSRect(x: 0, y: 0, width: CGFloat(frame.width), height: CGFloat(frame.height))
-            if #available(macOS 14.0, *) {
-                content.clipsToBounds = false
+            texts.append(marker.text)
+            labels.append(placed)
+        }
+        let nudged = HintGeometry.nudge(labels)
+        if nudged.count == labels.count {
+            labels = nudged
+        }
+        let groups = HintGeometry.panels(labels: labels, screens: screens)
+        ensureHintPanels(groups.count)
+        for (slot, group) in groups.enumerated() {
+            let hintPanel = hintPanels[slot]
+            let canvas = canvases[slot]
+            var badges: [HintCanvasView.Badge] = []
+            badges.reserveCapacity(group.items.count)
+            for item in group.items where texts.indices.contains(item.sourceIndex) {
+                badges.append(HintCanvasView.Badge(
+                    label: texts[item.sourceIndex],
+                    frame: NSRect(
+                        x: CGFloat(item.local.x),
+                        y: CGFloat(item.local.y),
+                        width: CGFloat(item.local.width),
+                        height: CGFloat(item.local.height)
+                    )
+                ))
             }
-            hintPanel.hasShadow = false
-            hintPanel.contentView = content
-            hintPanel.setFrame(
-                NSRect(
-                    x: CGFloat(frame.x),
-                    y: CGFloat(frame.y),
-                    width: CGFloat(frame.width),
-                    height: CGFloat(frame.height)
-                ),
-                display: true
+            let frame = NSRect(
+                x: CGFloat(group.frame.x),
+                y: CGFloat(group.frame.y),
+                width: CGFloat(group.frame.width),
+                height: CGFloat(group.frame.height)
             )
-            ModeTrace.noteLine(ModeTrace.formatHintPanel(
-                screen: group.screenIndex,
-                scale: group.backingScale,
-                frame: frame
+            if hintPanel.frame != frame {
+                hintPanel.setFrame(frame, display: false)
+            }
+            canvas.replace(badges, typedPrefix: typedPrefix)
+            hintPanel.displayIfNeeded()
+            if tracing {
+                ModeTrace.noteLine(ModeTrace.formatHintPanel(
+                    screen: group.screenIndex,
+                    scale: group.backingScale,
+                    frame: group.frame
+                ))
+            }
+            reveal(hintPanel, duration: ChromeMotion.hintAppearDuration(
+                reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             ))
-            reveal(hintPanel)
         }
+        hideHints(from: groups.count)
+        ModeTrace.noteTiming(
+            stage: "overlay",
+            milliseconds: watch.milliseconds,
+            fields: [
+                ("labels", "\(labels.count)"),
+                ("panels", "\(groups.count)"),
+                ("queued_ms", String(format: "%.1f", queuedMilliseconds)),
+            ]
+        )
     }
 
     func showHelp(_ page: HelpPage) {
@@ -213,17 +310,25 @@ private final class PanelHolder {
             frame.origin.y = min(max(visible.midY - size.height / 2, visible.minY + 12), maxY)
         }
         panel.setFrame(frame, display: true)
-        reveal(panel)
+        if panel.isVisible {
+            panel.alphaValue = 1
+        }
+        reveal(panel, duration: ChromeMotion.appearDuration(
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        ))
     }
 
-    /// Fades one panel in once. Later hint keystrokes replace the labels
-    /// without playing the fade again. Reduce Motion shows the sheet at once.
-    private func reveal(_ target: NSPanel) {
-        let duration = ChromeMotion.appearDuration(
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        )
-        let alreadyVisible = target.isVisible && target.alphaValue > 0.95
-        if duration == 0 || alreadyVisible {
+    /// Fades a panel in when it was hidden. A panel that is already showing
+    /// is left as it is, so typing a hint does not replay the fade. Reduce
+    /// Motion shows the panel at once.
+    private func reveal(_ target: NSPanel, duration: Double) {
+        if target.isVisible {
+            if target.alphaValue < 1, duration == 0 {
+                target.alphaValue = 1
+            }
+            return
+        }
+        if duration == 0 {
             target.alphaValue = 1
             target.orderFrontRegardless()
             return

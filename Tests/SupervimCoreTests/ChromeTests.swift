@@ -33,7 +33,14 @@ final class ChromeTests: XCTestCase {
 
     func testBadgeSizeIncludesTheCursorPaddingAndShadowMargin() {
         let size = HintBadgeMetrics.size(textWidth: 14, textHeight: 12)
-        XCTAssertEqual(size, HintBadgeSize(width: 44, height: 26))
+        XCTAssertEqual(size, HintBadgeSize(width: 39, height: 25))
+        // One SF Mono 12 letter is about 7.2pt wide and 14.5pt tall. The pill
+        // around it stays under 24 by 20, so it covers little of its target.
+        let letter = HintBadgeMetrics.size(textWidth: 7.3, textHeight: 14.5)
+        XCTAssertLessThanOrEqual(letter.width - HintBadgeMetrics.shadowMargin * 2, 24)
+        XCTAssertLessThanOrEqual(letter.height - HintBadgeMetrics.shadowMargin * 2, 20)
+        XCTAssertGreaterThanOrEqual(HintBadgeMetrics.cursorWidth, 2)
+        XCTAssertLessThan(HintBadgeMetrics.cursorHeight, 14.5)
         let empty = HintBadgeMetrics.size(textWidth: 0, textHeight: 0)
         XCTAssertGreaterThanOrEqual(empty.height, HintBadgeMetrics.minimumHeight)
         XCTAssertGreaterThan(empty.width, HintBadgeMetrics.shadowMargin * 2)
@@ -56,6 +63,15 @@ final class ChromeTests: XCTestCase {
                 )
             }
         }
+        for dark in [false, true] {
+            // The hairline has to show on the fill and on a page of the same gray.
+            let fill = dark ? ChromePalette.darkFill : ChromePalette.lightFill
+            let stroke = dark ? ChromePalette.darkStroke : ChromePalette.lightStroke
+            let alpha = dark ? ChromePalette.darkHairlineAlpha : ChromePalette.lightHairlineAlpha
+            let edge = stroke.composited(over: fill, alpha: alpha)
+            XCTAssertGreaterThanOrEqual(edge.contrastRatio(against: fill), 1.25, "dark=\(dark)")
+            XCTAssertLessThanOrEqual(edge.contrastRatio(against: fill), 2.2, "dark=\(dark)")
+        }
         XCTAssertEqual(ChromePalette.iconGreen, ChromeColor(hex: 0x34C759))
         XCTAssertEqual(ChromePalette.lightFill, ChromeColor(hex: 0xF7F7F8))
         XCTAssertNotEqual(ChromePalette.lightMatched, ChromePalette.iconGreen)
@@ -64,6 +80,10 @@ final class ChromeTests: XCTestCase {
     func testReduceMotionDropsTheAppearFade() {
         XCTAssertEqual(ChromeMotion.appearDuration(reduceMotion: false), 0.14)
         XCTAssertEqual(ChromeMotion.appearDuration(reduceMotion: true), 0)
+        // Labels answer a key. Their fade is short enough not to read as a wait.
+        XCTAssertEqual(ChromeMotion.hintAppearDuration(reduceMotion: false), 0.05)
+        XCTAssertEqual(ChromeMotion.hintAppearDuration(reduceMotion: true), 0)
+        XCTAssertLessThan(ChromeMotion.hintAppearDuration, ChromeMotion.appearDuration)
     }
 
     func testStatusGlyphFollowsTheMenuTitleAndHintStaysNormal() {

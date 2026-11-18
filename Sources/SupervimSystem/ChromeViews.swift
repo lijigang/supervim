@@ -59,8 +59,135 @@ func chromeDraw(
     attributed.draw(in: rect)
 }
 
-/// One hint label. The frame includes padding and a shadow margin.
-/// Placement code positions this frame and does not move the text inside it.
+/// Draws hint labels. One painter is made per drawing pass: it resolves the
+/// colors, the font and the accessibility settings once, and then draws any
+/// number of labels with them.
+///
+/// A label is a near-opaque gray pill with a hairline edge and a soft
+/// shadow, the green cursor block on the left, and SF Mono Semibold 12.
+/// Characters already typed turn green. They keep the same font, so a label
+/// does not change width while it is being typed.
+@MainActor
+struct HintBadgePainter {
+    var dark: Bool
+    var contrast: Bool
+    var differentiate: Bool
+    var opaque: Bool
+
+    private let font: NSFont
+    private let fill: NSColor
+    private let stroke: NSColor
+    private let cursor: NSColor
+    private let shadow: NSShadow
+    private let clearShadow = NSShadow()
+    private let matched: [NSAttributedString.Key: Any]
+    private let remainder: [NSAttributedString.Key: Any]
+
+    static let font = ChromeFont.mono(12, weight: .semibold)
+
+    init(
+        appearance: NSAppearance,
+        contrast: Bool? = nil,
+        differentiate: Bool? = nil,
+        reduceTransparency: Bool? = nil
+    ) {
+        let workspace = NSWorkspace.shared
+        let dark = ChromeAppearance.isDark(appearance)
+        let contrast = contrast ?? workspace.accessibilityDisplayShouldIncreaseContrast
+        let differentiate = differentiate ?? workspace.accessibilityDisplayShouldDifferentiateWithoutColor
+        let opaque = contrast || (reduceTransparency ?? workspace.accessibilityDisplayShouldReduceTransparency)
+        let font = Self.font
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.45 : 0.24)
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowBlurRadius = contrast ? 0 : 3
+        var matched: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: ChromeNSColor.color(dark ? ChromePalette.darkMatched : ChromePalette.lightMatched),
+        ]
+        if differentiate {
+            matched[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        self.dark = dark
+        self.contrast = contrast
+        self.differentiate = differentiate
+        self.opaque = opaque
+        self.font = font
+        self.fill = ChromeNSColor.color(
+            dark ? ChromePalette.darkFill : ChromePalette.lightFill,
+            alpha: opaque ? 1 : CGFloat(dark ? ChromePalette.darkFillAlpha : ChromePalette.lightFillAlpha)
+        )
+        self.stroke = ChromeNSColor.color(
+            dark ? ChromePalette.darkStroke : ChromePalette.lightStroke,
+            alpha: contrast ? 0.9 : CGFloat(dark ? ChromePalette.darkHairlineAlpha : ChromePalette.lightHairlineAlpha)
+        )
+        self.cursor = ChromeNSColor.color(ChromePalette.iconGreen)
+        self.shadow = shadow
+        self.matched = matched
+        self.remainder = [
+            .font: font,
+            .foregroundColor: ChromeNSColor.color(dark ? ChromePalette.darkText : ChromePalette.lightText),
+        ]
+    }
+
+    /// Outer size of a label, shadow margin included.
+    static func size(for label: String) -> NSSize {
+        let width = (label as NSString).size(withAttributes: [.font: font]).width
+        let size = HintBadgeMetrics.size(
+            textWidth: Double(width),
+            textHeight: Double(font.ascender - font.descender)
+        )
+        return NSSize(width: size.width, height: size.height)
+    }
+
+    func draw(label: String, typedPrefix: String, in frame: NSRect) {
+        let margin = CGFloat(HintBadgeMetrics.shadowMargin)
+        let pill = frame.insetBy(dx: margin, dy: margin)
+        let radius = CGFloat(HintBadgeMetrics.cornerRadius)
+        let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)
+
+        shadow.set()
+        fill.setFill()
+        path.fill()
+        clearShadow.set()
+
+        let line: CGFloat = contrast ? 1.5 : 1
+        let edge = NSBezierPath(
+            roundedRect: pill.insetBy(dx: line / 2, dy: line / 2),
+            xRadius: radius - line / 2,
+            yRadius: radius - line / 2
+        )
+        edge.lineWidth = line
+        stroke.setStroke()
+        edge.stroke()
+
+        let cursorHeight = min(CGFloat(HintBadgeMetrics.cursorHeight), pill.height - 6)
+        let cursorWidth = CGFloat(HintBadgeMetrics.cursorWidth)
+        let bar = NSRect(
+            x: pill.minX + CGFloat(HintBadgeMetrics.textPaddingX),
+            y: pill.midY - cursorHeight / 2,
+            width: cursorWidth,
+            height: cursorHeight
+        )
+        cursor.setFill()
+        NSBezierPath(roundedRect: bar, xRadius: cursorWidth / 2, yRadius: cursorWidth / 2).fill()
+
+        let split = HintLabelHighlight.split(label: label, typedPrefix: typedPrefix)
+        var textX = bar.maxX + CGFloat(HintBadgeMetrics.cursorGap)
+        let baseline = pill.midY - (font.ascender + font.descender) / 2
+        if !split.matched.isEmpty {
+            let text = split.matched as NSString
+            text.draw(at: NSPoint(x: textX, y: baseline), withAttributes: matched)
+            textX += text.size(withAttributes: matched).width
+        }
+        if !split.remainder.isEmpty {
+            (split.remainder as NSString).draw(at: NSPoint(x: textX, y: baseline), withAttributes: remainder)
+        }
+    }
+}
+
+/// One hint label as a view. The overlay draws its labels on one canvas;
+/// this view is the same drawing for the snapshot tool.
 @MainActor
 public final class HintBadgeView: NSView {
     public let label: String
@@ -84,88 +211,46 @@ public final class HintBadgeView: NSView {
     public override var isOpaque: Bool { false }
 
     public var badgeSize: NSSize {
-        let split = HintLabelHighlight.split(label: label, typedPrefix: typedPrefix)
-        let matchedFont = ChromeFont.mono(12, weight: .bold)
-        let remainderFont = ChromeFont.mono(12, weight: .medium)
-        let matchedWidth = (split.matched as NSString).size(withAttributes: [.font: matchedFont]).width
-        let remainderWidth = (split.remainder as NSString).size(withAttributes: [.font: remainderFont]).width
-        let textHeight = matchedFont.ascender - matchedFont.descender
-        let size = HintBadgeMetrics.size(
-            textWidth: Double(matchedWidth + remainderWidth),
-            textHeight: Double(textHeight)
-        )
-        return NSSize(width: size.width, height: size.height)
+        HintBadgePainter.size(for: label)
     }
 
     public override func draw(_ dirtyRect: NSRect) {
-        let dark = ChromeAppearance.isDark(effectiveAppearance)
-        let contrast = forcesIncreaseContrast ?? NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        let differentiate = forcesDifferentiateWithoutColor
-            ?? NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
-        let reduceTransparency = forcesReduceTransparency
-            ?? NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-        let opaque = contrast || reduceTransparency
-        let fillSource = dark ? ChromePalette.darkFill : ChromePalette.lightFill
-        let fillAlpha = opaque ? 1 : CGFloat(dark ? ChromePalette.darkFillAlpha : ChromePalette.lightFillAlpha)
-        let textSource = dark ? ChromePalette.darkText : ChromePalette.lightText
-        let matchedSource = dark ? ChromePalette.darkMatched : ChromePalette.lightMatched
-        let strokeAlpha: CGFloat = contrast ? 0.9 : (dark ? 0.28 : 0.16)
-        let strokeSource = dark ? ChromePalette.darkStroke : ChromePalette.lightStroke
+        HintBadgePainter(
+            appearance: effectiveAppearance,
+            contrast: forcesIncreaseContrast,
+            differentiate: forcesDifferentiateWithoutColor,
+            reduceTransparency: forcesReduceTransparency
+        ).draw(label: label, typedPrefix: typedPrefix, in: bounds)
+    }
+}
 
-        let margin = CGFloat(HintBadgeMetrics.shadowMargin)
-        let pill = bounds.insetBy(dx: margin, dy: margin)
-        let radius = CGFloat(HintBadgeMetrics.cornerRadius)
-        let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)
+/// Every hint label on one screen, drawn by one view. A keystroke replaces
+/// the list and redraws; no view is created or removed.
+@MainActor
+final class HintCanvasView: NSView {
+    struct Badge {
+        var label: String
+        var frame: NSRect
+    }
 
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(contrast ? 0.28 : 0.22)
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
-        shadow.shadowBlurRadius = contrast ? 0 : 2.5
-        shadow.set()
-        ChromeNSColor.color(fillSource, alpha: fillAlpha).setFill()
-        path.fill()
-        NSShadow().set()
+    private var badges: [Badge] = []
+    private var typedPrefix = ""
 
-        ChromeNSColor.color(strokeSource, alpha: strokeAlpha).setStroke()
-        path.lineWidth = contrast ? 1.5 : 1
-        path.stroke()
+    override var isOpaque: Bool { false }
 
-        let cursorHeight = min(12, pill.height - 6)
-        let cursor = NSRect(
-            x: pill.minX + CGFloat(HintBadgeMetrics.textPaddingX),
-            y: pill.midY - cursorHeight / 2,
-            width: CGFloat(HintBadgeMetrics.cursorWidth),
-            height: cursorHeight
-        )
-        ChromeNSColor.color(ChromePalette.iconGreen).setFill()
-        NSBezierPath(roundedRect: cursor, xRadius: 1, yRadius: 1).fill()
+    func replace(_ badges: [Badge], typedPrefix: String) {
+        self.badges = badges
+        self.typedPrefix = typedPrefix
+        needsDisplay = true
+    }
 
-        let split = HintLabelHighlight.split(label: label, typedPrefix: typedPrefix)
-        let matchedFont = ChromeFont.mono(12, weight: .bold)
-        let remainderFont = ChromeFont.mono(12, weight: .medium)
-        let matchedWidth = (split.matched as NSString).size(withAttributes: [.font: matchedFont]).width
-        let textX = cursor.maxX + CGFloat(HintBadgeMetrics.cursorGap)
-        let baseline = pill.midY - (matchedFont.ascender + matchedFont.descender) / 2
-        if !split.matched.isEmpty {
-            var attributes: [NSAttributedString.Key: Any] = [
-                .font: matchedFont,
-                .foregroundColor: ChromeNSColor.color(matchedSource),
-            ]
-            if differentiate {
-                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            }
-            NSAttributedString(string: split.matched, attributes: attributes).draw(
-                at: NSPoint(x: textX, y: baseline)
-            )
+    override func draw(_ dirtyRect: NSRect) {
+        guard !badges.isEmpty else {
+            return
         }
-        if !split.remainder.isEmpty {
-            NSAttributedString(
-                string: split.remainder,
-                attributes: [
-                    .font: remainderFont,
-                    .foregroundColor: ChromeNSColor.color(textSource),
-                ]
-            ).draw(at: NSPoint(x: textX + matchedWidth, y: baseline))
+        let painter = HintBadgePainter(appearance: effectiveAppearance)
+        for badge in badges where badge.frame.intersects(dirtyRect) {
+            painter.draw(label: badge.label, typedPrefix: typedPrefix, in: badge.frame)
         }
     }
 }
