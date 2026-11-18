@@ -1,5 +1,7 @@
 # 应用图标测试记录
 
+> 2026-11-18 补记：图标已经换成键帽设计（浅灰键帽、绿色小写 f、黄色 F 标签）。下面记录的是第一版图标，其中的几何和像素数值不再对应仓库里的文件。打包方式没有变：仍由 `scripts/make-icon.sh` 写出 SVG、PNG 和 icns，CI 仍跑 `scripts/make-icon.sh --check`。新图标的预览在 `docs/icon/`。
+
 记录日期：2026-11-17。主机是 Linux，不是 Mac。
 
 - 系统：Ubuntu，x86_64
