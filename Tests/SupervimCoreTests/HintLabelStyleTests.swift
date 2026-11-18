@@ -9,45 +9,137 @@ final class HintLabelStyleTests: XCTestCase {
         DisplayFrame(x: -1280, y: 0, width: 1280, height: 800, backingScale: 1),
     ]
 
-    func testTheShippedStyleIsStillClassicAndTheCandidatesAreAToD() {
-        XCTAssertEqual(HintLabelStyle.shipped, .classic)
+    func testTheShippedStyleIsAmberAndTheCandidatesAreAToD() {
+        XCTAssertEqual(HintLabelStyle.shipped, .amber)
+        XCTAssertEqual(HintLabelStyle.shipped.optionLetter, "A")
         XCTAssertEqual(HintLabelStyle.candidates, [.amber, .ink, .cursor, .glass])
         XCTAssertEqual(HintLabelStyle.candidates.map(\.optionLetter), ["A", "B", "C", "D"])
         XCTAssertNil(HintLabelStyle.classic.optionLetter)
         XCTAssertEqual(Set(HintLabelStyle.allCases.map(\.title)).count, HintLabelStyle.allCases.count)
-        XCTAssertFalse(HintLabelStyle.candidates.contains(.shipped))
     }
 
-    func testAStyleIsChosenByNameOrLetterAndAnythingElseIsTheShippedStyle() {
-        XCTAssertEqual(HintLabelStyle.resolve(nil), .classic)
-        XCTAssertEqual(HintLabelStyle.resolve(""), .classic)
-        XCTAssertEqual(HintLabelStyle.resolve("  "), .classic)
-        XCTAssertEqual(HintLabelStyle.resolve("neon"), .classic)
-        XCTAssertEqual(HintLabelStyle.resolve("amber"), .amber)
-        XCTAssertEqual(HintLabelStyle.resolve("Amber "), .amber)
-        XCTAssertEqual(HintLabelStyle.resolve("A"), .amber)
-        XCTAssertEqual(HintLabelStyle.resolve("b"), .ink)
-        XCTAssertEqual(HintLabelStyle.resolve("INK"), .ink)
-        XCTAssertEqual(HintLabelStyle.resolve("c"), .cursor)
-        XCTAssertEqual(HintLabelStyle.resolve("cursor"), .cursor)
-        XCTAssertEqual(HintLabelStyle.resolve("D"), .glass)
-        XCTAssertEqual(HintLabelStyle.resolve("glass"), .glass)
-        XCTAssertEqual(HintLabelStyle.resolve("classic"), .classic)
+    func testTheShippedLabelIsBoldRoundedFifteenOnOneYellowInBothAppearances() {
+        let spec = HintLabelStyle.shipped.spec
+        XCTAssertEqual(spec.fontDesign, .rounded)
+        XCTAssertEqual(spec.fontWeight, .bold)
+        XCTAssertEqual(spec.fontSize, 15)
+        XCTAssertEqual(spec.pointer, .corner)
+        XCTAssertEqual(spec.typed, .dim)
+        XCTAssertEqual(spec.cornerRadius, 6)
+        let light = HintLabelStyle.shipped.palette(dark: false)
+        let dark = HintLabelStyle.shipped.palette(dark: true)
+        XCTAssertEqual(light.fillTop, ChromeColor(hex: 0xFFE25A))
+        XCTAssertEqual(light.fillBottom, ChromeColor(hex: 0xFFC619))
+        XCTAssertEqual(light.fillAlpha, 1)
+        XCTAssertEqual(light.text, ChromeColor(hex: 0x231700))
+        XCTAssertEqual(dark.fillTop, light.fillTop)
+        XCTAssertEqual(dark.fillBottom, light.fillBottom)
+        XCTAssertEqual(dark.fillAlpha, light.fillAlpha)
+        XCTAssertEqual(dark.text, light.text)
+        XCTAssertEqual(dark.typedText, light.typedText)
+        XCTAssertEqual(dark.typedAlpha, light.typedAlpha)
+        // A one-letter body is larger than the v0.1.5 letter was tall.
+        let body = HintLabelMetrics.bodySize(spec: spec, textWidth: 9, capHeight: 10.6)
+        XCTAssertGreaterThanOrEqual(body.height, 21)
+        XCTAssertGreaterThanOrEqual(body.width, body.height)
     }
 
-    func testThePreferenceIsReadFromTheFirstStoreThatHasOne() throws {
-        let name = "supervim.tests.hint-style.\(UUID().uuidString)"
-        let store = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { store.removePersistentDomain(forName: name) }
-        XCTAssertEqual(HintLabelStyle.preferred(in: [nil, store]), .classic)
-        store.set("glass", forKey: HintLabelStyle.defaultsKey)
-        XCTAssertEqual(HintLabelStyle.preferred(in: [nil, store]), .glass)
-        store.set("nonsense", forKey: HintLabelStyle.defaultsKey)
-        XCTAssertEqual(HintLabelStyle.preferred(in: [store]), .classic)
-        store.removeObject(forKey: HintLabelStyle.defaultsKey)
-        XCTAssertEqual(HintLabelStyle.preferred(in: [store]), .classic)
-        XCTAssertEqual(HintLabelStyle.preferred(in: []), .classic)
-        XCTAssertEqual(HintLabelStyle.defaultsKey, "SupervimHintLabelStyle")
+    func testTypedLettersOfTheShippedLabelFadeAndTheRestStayDark() {
+        let split = HintLabelHighlight.split(label: "ZF", typedPrefix: "z")
+        XCTAssertEqual(split.matched, "Z")
+        XCTAssertEqual(split.remainder, "F")
+        for dark in [false, true] {
+            let palette = HintLabelStyle.shipped.palette(dark: dark)
+            XCTAssertEqual(palette.typedAlpha, 0.3)
+            XCTAssertNil(palette.typedFill)
+            for fill in [palette.fillTop, palette.fillBottom] {
+                let rest = palette.text.contrastRatio(against: fill)
+                let typed = palette.typedInk(on: fill).contrastRatio(against: fill)
+                XCTAssertGreaterThanOrEqual(rest, 11, "dark=\(dark)")
+                XCTAssertLessThan(typed, 2.5, "dark=\(dark)")
+                XCTAssertGreaterThan(typed, 1.35, "dark=\(dark)")
+            }
+        }
+    }
+
+    func testThereIsNoSwitchForTheLabelStyle() throws {
+        let style = try source("Sources/SupervimCore/HintLabelStyle.swift")
+        let panel = try source("Sources/SupervimSystem/HintOverlayWindow.swift")
+        let views = try source("Sources/SupervimSystem/ChromeViews.swift")
+        for text in [style, panel, views] {
+            for token in ["UserDefaults", "defaultsKey", "SupervimHintLabelStyle", "preferred("] {
+                XCTAssertFalse(text.contains(token), token)
+            }
+        }
+        XCTAssertTrue(panel.contains("HintLabelStyle.shipped"))
+        // One panel and one canvas per screen, made once and kept.
+        XCTAssertTrue(panel.contains("private func ensureHintPanels"))
+        XCTAssertTrue(panel.contains("canvas.replace(badges, typedPrefix: typedPrefix)"))
+        XCTAssertEqual(panel.components(separatedBy: "HintCanvasView(frame:").count - 1, 2)
+        XCTAssertTrue(views.contains("var style: HintLabelStyle = .shipped"))
+        let settings = try source("Sources/Supervim/ExclusionSettingsPanel.swift")
+        XCTAssertFalse(settings.contains("HintLabelStyle"))
+    }
+
+    func testTheShippedLabelOfATextRecognitionTargetLiesOnItsTopLeftCorner() throws {
+        // A chat window read by text recognition: five lines, 60pt apart.
+        let window = CapturedWindow(
+            pixelWidth: 1600,
+            pixelHeight: 1200,
+            frame: HintRect(x: 200, y: 100, width: 800, height: 600),
+            backingScale: 2
+        )
+        let boxes = (0..<5).map { row in
+            VisionBox(
+                text: "line \(row)",
+                normalized: HintRect(x: 0.1, y: 0.85 - Double(row) * 0.1, width: 0.3, height: 0.03),
+                kind: .text
+            )
+        }
+        let targets = VisionHintGeometry.targets(boxes: boxes, image: window)
+        XCTAssertEqual(targets.count, 5)
+        let markers = HintSession(targets: targets, click: .plain).markers
+        XCTAssertEqual(markers.count, 5)
+        let size: (String) -> HintBadgeSize = { _ in HintBadgeSize(width: 29, height: 29) }
+        let whole = HintOverlayLayout.arrange(markers: markers, style: .shipped, screens: screens, size: size)
+        XCTAssertEqual(whole.labels.count, 5)
+        for label in whole.labels {
+            XCTAssertNil(label.box.tipX)
+            XCTAssertFalse(label.box.tailDown)
+            XCTAssertEqual(label.box.frame, label.placed)
+            XCTAssertEqual(label.box.frame, HintGeometry.labelRect(
+                element: label.element, badgeWidth: 29, badgeHeight: 29, screens: screens
+            ))
+            // The frame's top-left corner, where the drawn-out corner ends,
+            // is the target's top-left corner.
+            XCTAssertEqual(label.box.frame.x, label.element.x, accuracy: 0.001)
+            XCTAssertEqual(900 - (label.box.frame.y + label.box.frame.height), label.element.y, accuracy: 0.001)
+            XCTAssertEqual(label.element.width, 240, accuracy: 0.001)
+        }
+        XCTAssertEqual(whole.panels.count, 1)
+        XCTAssertEqual(Set(whole.panels.flatMap(\.items).map(\.sourceIndex)), [0, 1, 2, 3, 4])
+
+        // Labels left after a key stay where they were, with or without the
+        // rest of the pass.
+        let left = Array(markers.prefix(2))
+        let after = HintOverlayLayout.arrange(markers: left, style: .shipped, screens: screens, size: size)
+        let afterWithPass = HintOverlayLayout.arrange(
+            markers: left,
+            style: .shipped,
+            screens: screens,
+            neighbours: markers.map(HintOverlayLayout.element(of:)),
+            size: size
+        )
+        XCTAssertEqual(after, afterWithPass)
+        XCTAssertEqual(after.labels.map(\.box), Array(whole.labels.prefix(2)).map(\.box))
+    }
+
+    private func source(_ relative: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
     func testClassicKeepsItsNumbersAndEveryCandidateIsLargerBolderAndPointed() {
