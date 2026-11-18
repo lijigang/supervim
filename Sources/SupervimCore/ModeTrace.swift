@@ -153,7 +153,58 @@ public enum ModeTrace {
             .appendingPathComponent("Library/Logs/Supervim.log", isDirectory: false)
     }
 
+    /// A line with how long one stage took. `fields` keep the order given.
+    public static func formatTiming(
+        stage: String,
+        milliseconds: Double,
+        fields: [(String, String)]
+    ) -> String {
+        let shownMilliseconds = milliseconds.isFinite ? String(format: "%.1f", milliseconds) : "-"
+        var line = "timing stage=\(stage) ms=\(shownMilliseconds)"
+        for (name, value) in fields {
+            line += " \(name)=\(value)"
+        }
+        return line
+    }
+
+    public static func noteTiming(stage: String, milliseconds: Double, fields: [(String, String)] = []) {
+        guard enabled() else {
+            return
+        }
+        append(formatTiming(stage: stage, milliseconds: milliseconds, fields: fields))
+    }
+
+    /// True when a line would be kept. Callers use it to skip building a
+    /// line that costs something to format.
+    public static var isEnabled: Bool {
+        enabled()
+    }
+
+    /// Runs `body` with every line collected in memory instead of the file.
+    /// Tests use it. The previous destination is restored afterwards.
+    public static func capture(_ body: () -> Void) -> [String] {
+        let collector = TraceCollector()
+        let previous = state.swapCollector(collector)
+        body()
+        _ = state.swapCollector(previous)
+        return collector.lines
+    }
+
+    /// Waits for queued lines to reach the file.
+    public static func flush() {
+        state.writer.flush()
+    }
+
+    private static let state = TraceState()
+
     private static func enabled() -> Bool {
+        if state.collector() != nil {
+            return true
+        }
+        return state.toggle.isOn()
+    }
+
+    fileprivate static func probe() -> Bool {
         let value = ProcessInfo.processInfo.environment[environmentKey]?.lowercased()
         if value == "1" || value == "true" || value == "yes" {
             return true
@@ -161,7 +212,7 @@ public enum ModeTrace {
         if UserDefaults.standard.bool(forKey: defaultsKey) {
             return true
         }
-        return UserDefaults(suiteName: "com.lijigang.supervim")?.bool(forKey: defaultsKey) ?? false
+        return state.suite?.bool(forKey: defaultsKey) ?? false
     }
 
     private static func modeName(_ mode: SupervimMode) -> String {
@@ -181,26 +232,195 @@ public enum ModeTrace {
         ISO8601DateFormatter().string(from: Date())
     }
 
-    private static let writeLock = NSLock()
-
     private static func append(_ line: String) {
-        let url = logFileURL()
-        let directory = url.deletingLastPathComponent()
-        writeLock.lock()
-        defer { writeLock.unlock() }
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = Data((line + "\n").utf8)
-            if FileManager.default.fileExists(atPath: url.path) {
-                let handle = try FileHandle(forWritingTo: url)
-                defer { try? handle.close() }
-                try handle.seekToEnd()
-                try handle.write(contentsOf: data)
-            } else {
-                try data.write(to: url, options: .atomic)
-            }
-        } catch {
+        if let collector = state.collector() {
+            collector.add(line)
             return
         }
+        state.writer.write(stamped(line))
+    }
+
+    /// Mode lines already start with a date. Every other line gets the
+    /// wall-clock time to the millisecond, so stages can be lined up.
+    private static func stamped(_ line: String) -> String {
+        if let first = line.unicodeScalars.first, first.value >= 0x30, first.value <= 0x39 {
+            return line
+        }
+        return "\(clockText()) \(line)"
+    }
+
+    private static func clockText() -> String {
+        let now = Date().timeIntervalSince1970
+        let whole = Int(now)
+        let milliseconds = Int((now - Double(whole)) * 1000)
+        let seconds = whole % 60
+        let minutes = (whole / 60) % 60
+        let hours = (whole / 3600) % 24
+        return String(format: "%02d:%02d:%02d.%03dZ", hours, minutes, seconds, milliseconds)
+    }
+}
+
+/// Monotonic stopwatch for the debug log. Not a wall clock.
+public struct TraceStopwatch: Sendable {
+    private let started: UInt64
+
+    public init() {
+        started = DispatchTime.now().uptimeNanoseconds
+    }
+
+    public var milliseconds: Double {
+        Double(DispatchTime.now().uptimeNanoseconds &- started) / 1_000_000
+    }
+}
+
+/// Remembers whether the log is on, and asks again only after the interval.
+/// The probe reads the environment and two defaults domains; the event hook
+/// calls `isOn` for every key and must not pay for that each time.
+public final class TraceSwitch: @unchecked Sendable {
+    private let lock = NSLock()
+    private let interval: Int64
+    private let now: @Sendable () -> Int64
+    private let probe: @Sendable () -> Bool
+    private var checkedAt: Int64?
+    private var value = false
+
+    public init(
+        intervalMilliseconds: Int64,
+        now: @escaping @Sendable () -> Int64,
+        probe: @escaping @Sendable () -> Bool
+    ) {
+        interval = intervalMilliseconds
+        self.now = now
+        self.probe = probe
+    }
+
+    public func isOn() -> Bool {
+        let current = now()
+        lock.lock()
+        if let checkedAt, current - checkedAt < interval, current >= checkedAt {
+            let known = value
+            lock.unlock()
+            return known
+        }
+        checkedAt = current
+        lock.unlock()
+        let fresh = probe()
+        lock.lock()
+        value = fresh
+        lock.unlock()
+        return fresh
+    }
+}
+
+/// Appends lines on its own queue through one open handle.
+/// `write` returns as soon as the line is queued.
+public final class TraceFileWriter: @unchecked Sendable {
+    private let url: URL
+    private let queue = DispatchQueue(label: "com.lijigang.supervim.trace", qos: .utility)
+    private var handle: FileHandle?
+    private var failed = false
+    private var openCount = 0
+
+    public init(url: URL) {
+        self.url = url
+    }
+
+    /// How many times the file was opened. Read after `flush`.
+    public var opens: Int {
+        queue.sync { openCount }
+    }
+
+    public func write(_ line: String) {
+        queue.async { [self] in
+            guard let handle = opened() else {
+                return
+            }
+            do {
+                try handle.write(contentsOf: Data((line + "\n").utf8))
+            } catch {
+                self.handle = nil
+            }
+        }
+    }
+
+    public func flush() {
+        queue.sync {}
+    }
+
+    /// Parks the queue until `gate` is signalled. Tests use it to show that
+    /// `write` does not wait for the disk.
+    func hold(_ gate: DispatchSemaphore) {
+        queue.async {
+            gate.wait()
+        }
+    }
+
+    private func opened() -> FileHandle? {
+        if let handle {
+            return handle
+        }
+        if failed {
+            return nil
+        }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: url.path) {
+                try Data().write(to: url)
+            }
+            let made = try FileHandle(forWritingTo: url)
+            try made.seekToEnd()
+            handle = made
+            openCount += 1
+            return made
+        } catch {
+            failed = true
+            return nil
+        }
+    }
+}
+
+private final class TraceCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var kept: [String] = []
+
+    var lines: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return kept
+    }
+
+    func add(_ line: String) {
+        lock.lock()
+        kept.append(line)
+        lock.unlock()
+    }
+}
+
+private final class TraceState: @unchecked Sendable {
+    let suite = UserDefaults(suiteName: "com.lijigang.supervim")
+    let writer = TraceFileWriter(url: ModeTrace.logFileURL())
+    let toggle = TraceSwitch(
+        intervalMilliseconds: 2_000,
+        now: { Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000) },
+        probe: { ModeTrace.probe() }
+    )
+    private let lock = NSLock()
+    private var active: TraceCollector?
+
+    func collector() -> TraceCollector? {
+        lock.lock()
+        defer { lock.unlock() }
+        return active
+    }
+
+    func swapCollector(_ next: TraceCollector?) -> TraceCollector? {
+        lock.lock()
+        defer { lock.unlock() }
+        let previous = active
+        active = next
+        return previous
     }
 }
