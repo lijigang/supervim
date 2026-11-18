@@ -124,6 +124,10 @@ private final class PanelHolder {
     private var sizes: [String: NSSize] = [:]
     /// Read once. `classic` unless the user set `HintLabelStyle.defaultsKey`.
     private let style: HintLabelStyle
+    /// Targets of the hint pass on screen, kept from the keystroke that
+    /// showed all of them. Placement reads them while a prefix is typed, so
+    /// the labels that remain do not move.
+    private var passTargets: [HintRect] = []
 
     init() {
         panel = Self.makePanel()
@@ -133,6 +137,7 @@ private final class PanelHolder {
     func hideAll() {
         panel.orderOut(nil)
         hideHints(from: 0)
+        passTargets.removeAll(keepingCapacity: true)
     }
 
     private func hideHints(from first: Int) {
@@ -216,7 +221,15 @@ private final class PanelHolder {
                 ModeTrace.noteLine(ModeTrace.formatHintPlace(screen: screen, index: index))
             }
         }
-        let arrangement = HintOverlayLayout.arrange(markers: markers, style: style, screens: screens) { text in
+        if style.spec.pointer == .caret, typedPrefix.isEmpty || passTargets.isEmpty {
+            passTargets = markers.map(HintOverlayLayout.element(of:))
+        }
+        let arrangement = HintOverlayLayout.arrange(
+            markers: markers,
+            style: style,
+            screens: screens,
+            neighbours: passTargets
+        ) { text in
             let size = badgeSize(text)
             return HintBadgeSize(width: Double(size.width), height: Double(size.height))
         }

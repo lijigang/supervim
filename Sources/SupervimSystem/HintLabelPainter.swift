@@ -451,8 +451,12 @@ struct StyledHintPainter {
                 base: CGFloat(HintLabelMetrics.cornerBase)
             )
         case .caret:
+            // No tip: the label rests on its target and needs no caret.
+            guard let tipX else {
+                return .none
+            }
             return .caret(
-                tipX: tipX ?? body.midX,
+                tipX: tipX,
                 halfWidth: CGFloat(HintLabelMetrics.caretHalfWidth),
                 height: CGFloat(HintLabelMetrics.caretHeight),
                 down: tailDown

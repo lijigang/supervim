@@ -361,6 +361,143 @@ final class HintLabelStyleTests: XCTestCase {
         XCTAssertEqual(none, HintOverlayArrangement(labels: [], panels: []))
     }
 
+    func testACaretLabelRestsOnItsOwnRowWhenTheNextRowIsUnderIt() {
+        // Six links 17pt high, one every 22pt, as in a sidebar list.
+        let rows = (0..<6).map { index in
+            HintMarker(
+                index: index,
+                text: "Z\(index)",
+                anchor: HintPoint(x: 500, y: 200 + Double(index) * 22),
+                elementWidth: 180,
+                elementHeight: 17
+            )
+        }
+        let spec = HintLabelStyle.ink.spec
+        let arrangement = HintOverlayLayout.arrange(markers: rows, style: .ink, screens: screens) { _ in
+            HintBadgeSize(width: 46, height: 33)
+        }
+        XCTAssertEqual(arrangement.labels.count, 6)
+        for index in 0..<5 {
+            let label = arrangement.labels[index]
+            XCTAssertNil(label.box.tipX, "row \(index) has the next row under it")
+            XCTAssertFalse(label.box.tailDown)
+            // The 21pt body is centred on the 17pt row, 2pt inside its left edge.
+            let bodyTop = 900 - (label.box.frame.y + label.box.frame.height) + spec.margin
+            XCTAssertEqual(bodyTop, label.element.y - 2, accuracy: 0.001)
+            XCTAssertEqual(label.box.frame.x + spec.margin, 502, accuracy: 0.001)
+            XCTAssertEqual(label.box.frame, label.placed, "22pt rows leave room for 21pt bodies")
+        }
+        // Nothing is under the last row, so its label hangs there on a caret.
+        let last = arrangement.labels[5]
+        XCTAssertEqual(last.box.tipX, 524)
+        let lastBodyTop = 900 - (last.box.frame.y + last.box.frame.height) + spec.margin
+        XCTAssertGreaterThan(lastBodyTop, last.element.y + last.element.height)
+
+        // The corner styles lie on the row whatever is under it.
+        let corner = HintOverlayLayout.arrange(markers: rows, style: .amber, screens: screens) { _ in
+            HintBadgeSize(width: 40, height: 29)
+        }
+        XCTAssertEqual(corner.labels.map(\.box.frame.x), Array(repeating: 500, count: 6))
+        XCTAssertEqual(corner.labels.compactMap(\.box.tipX), [])
+    }
+
+    func testLabelsLeftAfterAKeyStayWhereTheWholePassPutThem() {
+        let first = HintMarker(
+            index: 0, text: "ZF", anchor: HintPoint(x: 500, y: 200), elementWidth: 180, elementHeight: 17
+        )
+        let second = HintMarker(
+            index: 1, text: "J", anchor: HintPoint(x: 500, y: 222), elementWidth: 180, elementHeight: 17
+        )
+        let size: (String) -> HintBadgeSize = { _ in HintBadgeSize(width: 46, height: 33) }
+        let whole = HintOverlayLayout.arrange(markers: [first, second], style: .glass, screens: screens, size: size)
+        let pass = [first, second].map(HintOverlayLayout.element(of:))
+        XCTAssertEqual(pass[1], HintRect(x: 500, y: 222, width: 180, height: 17))
+
+        // "z" was typed: only the first label is left. With the pass's
+        // targets it stays on its row; without them it would drop under it.
+        let kept = HintOverlayLayout.arrange(
+            markers: [first], style: .glass, screens: screens, neighbours: pass, size: size
+        )
+        XCTAssertEqual(kept.labels.first?.box, whole.labels.first?.box)
+        XCTAssertNil(kept.labels.first?.box.tipX)
+        let alone = HintOverlayLayout.arrange(markers: [first], style: .glass, screens: screens, size: size)
+        XCTAssertEqual(alone.labels.first?.box.tipX, 524)
+
+        // Classic does not look at neighbours.
+        let classic = HintOverlayLayout.arrange(markers: [first], style: .classic, screens: screens, size: size)
+        let classicWithPass = HintOverlayLayout.arrange(
+            markers: [first], style: .classic, screens: screens, neighbours: pass, size: size
+        )
+        XCTAssertEqual(classic, classicWithPass)
+    }
+
+    func testThePlaceUnderATargetIsTakenOnlyByAnotherTargetThatDoesNotHoldIt() {
+        let spec = HintLabelStyle.ink.spec
+        let button = HintRect(x: 100, y: 40, width: 28, height: 28)
+        guard let box = HintGeometry.labelBox(
+            element: button, badgeWidth: 37, badgeHeight: 33, spec: spec, screens: screens
+        ) else {
+            return XCTFail("expected a label")
+        }
+        // The body is x 101.5...126.5, y 69...90 from the top.
+        func crowded(_ neighbours: [HintRect]) -> Bool {
+            HintGeometry.isCrowded(
+                frame: box.frame, element: button, neighbours: neighbours, spec: spec, screens: screens
+            )
+        }
+        XCTAssertFalse(crowded([]))
+        XCTAssertFalse(crowded([button]), "the target itself")
+        XCTAssertFalse(crowded([HintRect(x: 134, y: 40, width: 28, height: 28)]), "the next button in the bar")
+        XCTAssertFalse(crowded([HintRect(x: 0, y: 30, width: 600, height: 80)]), "the bar that holds the button")
+        XCTAssertFalse(crowded([HintRect(x: 90, y: 87, width: 60, height: 20)]), "3pt into the body")
+        XCTAssertTrue(crowded([HintRect(x: 90, y: 86, width: 60, height: 20)]), "4pt into the body")
+        XCTAssertTrue(crowded([HintRect(x: 0, y: 75, width: 600, height: 40)]), "a field under the bar")
+        XCTAssertFalse(HintGeometry.isCrowded(
+            frame: box.frame, element: button,
+            neighbours: [HintRect(x: 0, y: 75, width: 600, height: 40)], spec: spec, screens: []
+        ))
+    }
+
+    func testARestingLabelIsCentredOnAShortTargetAndAtTheTopOfATallOne() {
+        let spec = HintLabelStyle.glass.spec
+        func rest(_ element: HintRect) -> HintLabelBox? {
+            HintGeometry.restingBox(
+                element: element, badgeWidth: 50, badgeHeight: 34, spec: spec, screens: screens
+            )
+        }
+        func bodyTop(_ box: HintLabelBox) -> Double {
+            900 - (box.frame.y + box.frame.height) + spec.margin
+        }
+        // Body 22pt. A 28pt tab is within 8pt of it: centred.
+        guard let tab = rest(HintRect(x: 88, y: 5, width: 172, height: 28)) else {
+            return XCTFail("expected a label")
+        }
+        XCTAssertNil(tab.tipX)
+        XCTAssertEqual(bodyTop(tab), 8, accuracy: 0.001)
+        XCTAssertEqual(tab.frame.x + spec.margin, 90, accuracy: 0.001)
+        XCTAssertEqual(tab.frame.width, 50)
+        XCTAssertEqual(tab.frame.height, 34)
+        // A 62pt row is not: 2pt below its top edge.
+        guard let row = rest(HintRect(x: 56, y: 114, width: 230, height: 62)) else {
+            return XCTFail("expected a label")
+        }
+        XCTAssertEqual(bodyTop(row), 116, accuracy: 0.001)
+        // At the left edge of a screen the body stays 2pt inside it.
+        guard let edge = rest(HintRect(x: -1280, y: 300, width: 40, height: 20)) else {
+            return XCTFail("expected a label")
+        }
+        XCTAssertEqual(edge.frame.x + spec.margin, -1278, accuracy: 0.001)
+        XCTAssertNil(rest(HintRect(x: 0, y: 0, width: 0, height: 10)))
+        XCTAssertNil(HintGeometry.restingBox(
+            element: HintRect(x: 0, y: 0, width: 10, height: 10),
+            badgeWidth: 50, badgeHeight: 34, spec: spec, screens: []
+        ))
+        XCTAssertNil(HintGeometry.restingBox(
+            element: HintRect(x: 0, y: 0, width: 10, height: 10),
+            badgeWidth: 0, badgeHeight: 34, spec: spec, screens: screens
+        ))
+    }
+
     private func sampleMarkers() -> [HintMarker] {
         [
             HintMarker(index: 0, text: "F", anchor: HintPoint(x: 100, y: 40), elementWidth: 14, elementHeight: 14),

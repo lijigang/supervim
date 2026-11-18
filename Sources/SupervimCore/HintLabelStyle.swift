@@ -298,7 +298,7 @@ extension HintLabelStyle {
                 fontSize: 16,
                 tracking: 0.5,
                 paddingX: 9,
-                paddingY: 5.5,
+                paddingY: 5,
                 cornerRadius: nil,
                 margin: 6,
                 pointer: .caret,
@@ -441,6 +441,15 @@ public enum HintLabelMetrics {
     public static let caretDepth = 28.0
     /// The caret's tip stays this far inside the bottom edge of a short target.
     public static let caretInset = 4.0
+    /// A caret label's body may reach this far into another target before
+    /// the place under its own target counts as taken.
+    public static let crowdSlack = 3.0
+    /// A label resting on its target has its body this far inside the
+    /// target's left edge, and this far below the top of a tall target.
+    public static let restInset = 2.0
+    /// A resting label is centred vertically on a target that is at most
+    /// this much taller than the label's body.
+    public static let restCentering = 8.0
 
     /// Body of the label, without the margin.
     public static func bodySize(spec: HintLabelSpec, textWidth: Double, capHeight: Double) -> HintBadgeSize {

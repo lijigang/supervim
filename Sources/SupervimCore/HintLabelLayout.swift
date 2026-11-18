@@ -4,7 +4,8 @@ import Foundation
 public struct HintLabelBox: Equatable, Sendable {
     /// Body and margin, origin at the bottom-left, y up.
     public var frame: HintRect
-    /// Global x of the caret's tip. `nil` when the style has no caret.
+    /// Global x of the caret's tip. `nil` when the label has no caret: the
+    /// style has none, or the label rests on its target.
     public var tipX: Double?
     /// The label sits above its target and the caret points down.
     public var tailDown: Bool
@@ -121,6 +122,93 @@ extension HintGeometry {
         )
     }
 
+    /// Where a caret label goes when the place under its target is taken:
+    /// on the target itself, at its leading edge, with no caret. The body is
+    /// `restInset` inside the left edge. On a target not much taller than
+    /// the body it is centred vertically, so the labels of a tight list
+    /// line up with their rows; on a taller one it is `restInset` below the
+    /// top edge.
+    public static func restingBox(
+        element: HintRect,
+        badgeWidth: Double,
+        badgeHeight: Double,
+        spec: HintLabelSpec,
+        screens: [DisplayFrame]
+    ) -> HintLabelBox? {
+        guard let primary = screens.first,
+              primary.height.isFinite, primary.height > 0,
+              element.isUsable,
+              badgeWidth.isFinite, badgeHeight.isFinite,
+              badgeWidth > 0, badgeHeight > 0
+        else {
+            return nil
+        }
+        let bodyHeight = max(badgeHeight - spec.margin * 2, 0)
+        let inset = HintLabelMetrics.restInset
+        let bodyTop = element.height <= bodyHeight + HintLabelMetrics.restCentering
+            ? element.y + (element.height - bodyHeight) / 2
+            : element.y + inset
+        var left = element.x + inset - spec.margin
+        let anchor = HintPoint(x: element.x + min(element.width / 2, 1), y: element.y + element.height / 2)
+        if let index = screenIndex(containingAX: anchor, screens: screens) {
+            let screen = accessibilityFrame(of: screens[index], primaryHeight: primary.height)
+            let lowest = screen.x - spec.margin + 2
+            let highest = screen.x + screen.width - badgeWidth + spec.margin - 2
+            if highest >= lowest {
+                left = min(max(left, lowest), highest)
+            }
+        }
+        return HintLabelBox(
+            frame: HintRect(
+                x: left,
+                y: primary.height - (bodyTop - spec.margin) - badgeHeight,
+                width: badgeWidth,
+                height: badgeHeight
+            )
+        )
+    }
+
+    /// Whether the body of a label at `frame` lies on a target other than
+    /// its own. `frame` is in AppKit points; `element` and `neighbours` are
+    /// accessibility frames. The body may reach `crowdSlack` into a
+    /// neighbour. A neighbour that is the target itself, or that holds the
+    /// whole target, as a row holds its button, does not count.
+    public static func isCrowded(
+        frame: HintRect,
+        element: HintRect,
+        neighbours: [HintRect],
+        spec: HintLabelSpec,
+        screens: [DisplayFrame]
+    ) -> Bool {
+        guard let primary = screens.first, primary.height.isFinite else {
+            return false
+        }
+        let shrink = spec.margin + HintLabelMetrics.crowdSlack
+        let left = frame.x + shrink
+        let right = frame.x + frame.width - shrink
+        let top = primary.height - frame.y - frame.height + shrink
+        let bottom = primary.height - frame.y - shrink
+        guard right > left, bottom > top else {
+            return false
+        }
+        for other in neighbours {
+            guard other.x < right, other.x + other.width > left,
+                  other.y < bottom, other.y + other.height > top
+            else {
+                continue
+            }
+            let holdsTarget = other.x <= element.x
+                && other.y <= element.y
+                && other.x + other.width >= element.x + element.width
+                && other.y + other.height >= element.y + element.height
+            if holdsTarget {
+                continue
+            }
+            return true
+        }
+        return false
+    }
+
     /// `nudge`, but two labels count as touching only when the rectangles
     /// `slack` inside their frames do. A candidate's frame has a clear margin
     /// around its body, and margins may overlap.
@@ -159,24 +247,29 @@ public enum HintOverlayLayout {
     /// the whole frames. A candidate is placed with `labelBox`, and its
     /// bodies may come within a point and a half of each other before one
     /// is moved.
+    ///
+    /// A caret label hangs under its target only when nothing else that can
+    /// be clicked is there. Under a row of a tight list is the next row, and
+    /// a label there would look like the next row's; such a label rests on
+    /// its own target instead (`restingBox`). `neighbours` are the targets
+    /// that count for this, as accessibility frames. Pass the targets of the
+    /// whole hint pass while a prefix is typed, so the labels that remain
+    /// stay where they were. `nil` means the targets of `markers`.
     public static func arrange(
         markers: [HintMarker],
         style: HintLabelStyle,
         screens: [DisplayFrame],
+        neighbours: [HintRect]? = nil,
         size: (String) -> HintBadgeSize
     ) -> HintOverlayArrangement {
         let spec = style.spec
+        let taken = spec.pointer == .caret ? (neighbours ?? markers.map(Self.element(of:))) : []
         var labels: [HintPlacedLabel] = []
         labels.reserveCapacity(markers.count)
         for marker in markers {
-            let element = HintRect(
-                x: marker.anchor.x,
-                y: marker.anchor.y,
-                width: marker.elementWidth,
-                height: marker.elementHeight
-            )
+            let element = Self.element(of: marker)
             let badge = size(marker.text)
-            guard let box = HintGeometry.labelBox(
+            guard var box = HintGeometry.labelBox(
                 element: element,
                 badgeWidth: badge.width,
                 badgeHeight: badge.height,
@@ -184,6 +277,19 @@ public enum HintOverlayLayout {
                 screens: screens
             ) else {
                 continue
+            }
+            if spec.pointer == .caret,
+               HintGeometry.isCrowded(
+                   frame: box.frame, element: element, neighbours: taken, spec: spec, screens: screens
+               ),
+               let resting = HintGeometry.restingBox(
+                   element: element,
+                   badgeWidth: badge.width,
+                   badgeHeight: badge.height,
+                   spec: spec,
+                   screens: screens
+               ) {
+                box = resting
             }
             labels.append(HintPlacedLabel(
                 markerIndex: marker.index,
@@ -204,5 +310,15 @@ public enum HintOverlayLayout {
         }
         let panels = HintGeometry.panels(labels: labels.map(\.box.frame), screens: screens)
         return HintOverlayArrangement(labels: labels, panels: panels)
+    }
+
+    /// A marker's target as an accessibility frame.
+    public static func element(of marker: HintMarker) -> HintRect {
+        HintRect(
+            x: marker.anchor.x,
+            y: marker.anchor.y,
+            width: marker.elementWidth,
+            height: marker.elementHeight
+        )
     }
 }

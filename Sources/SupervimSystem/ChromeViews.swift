@@ -224,7 +224,12 @@ public final class HintBadgeView: NSView {
             contrast: forcesIncreaseContrast,
             differentiate: forcesDifferentiateWithoutColor,
             reduceTransparency: forcesReduceTransparency
-        ).draw(label: label, typedPrefix: typedPrefix, in: bounds)
+        ).draw(
+            label: label,
+            typedPrefix: typedPrefix,
+            in: bounds,
+            tipX: style.spec.pointer == .caret ? bounds.midX : nil
+        )
     }
 }
 

@@ -12,7 +12,15 @@ public final class HintLabelPreviewView: NSView {
     public let style: HintLabelStyle
     public let labelCount: Int
 
-    public init(markers: [HintMarker], typedPrefix: String, style: HintLabelStyle, size: NSSize) {
+    /// `pass` is every marker of the hint pass when `markers` are only the
+    /// ones left after `typedPrefix`, as the overlay remembers them.
+    public init(
+        markers: [HintMarker],
+        typedPrefix: String,
+        style: HintLabelStyle,
+        size: NSSize,
+        pass: [HintMarker]? = nil
+    ) {
         self.style = style
         let screen = DisplayFrame(
             x: 0,
@@ -21,7 +29,12 @@ public final class HintLabelPreviewView: NSView {
             height: Double(size.height),
             backingScale: 2
         )
-        let arrangement = HintOverlayLayout.arrange(markers: markers, style: style, screens: [screen]) { text in
+        let arrangement = HintOverlayLayout.arrange(
+            markers: markers,
+            style: style,
+            screens: [screen],
+            neighbours: (pass ?? markers).map(HintOverlayLayout.element(of:))
+        ) { text in
             let measured = HintLabelRenderer.size(for: text, style: style)
             return HintBadgeSize(width: Double(measured.width), height: Double(measured.height))
         }
