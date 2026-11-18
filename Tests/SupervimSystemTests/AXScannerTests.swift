@@ -754,11 +754,11 @@ final class AXScannerTests: XCTestCase {
             "AXSplitGroup", "AXScrollBar", "AXSheet", "AXDialog", "AXSystemDialog",
             "AXMenu", "AXMenuBar", "AXRow", "AXLayoutArea", "AXBrowser",
         ]
-        let children = roles.map { role in
+        let children = roles.enumerated().map { index, role in
             AccessibilityElement(
                 role: role,
                 actions: ["AXPress"],
-                frame: ElementFrame(x: 4, y: 4, width: 40, height: 20)
+                frame: ElementFrame(x: 4, y: 4 + Double(index) * 24, width: 40, height: 20)
             )
         }
         fixture.reader.window = .value(
@@ -793,9 +793,10 @@ final class AXScannerTests: XCTestCase {
             return XCTFail("expected elements")
         }
 
-        XCTAssertEqual(snapshot.elements.map(\.path), [[0], [3]])
+        // The button and the link are cut to the same 10 by 10 corner. Two
+        // labels there would sit on one click point, so one target is kept.
+        XCTAssertEqual(snapshot.elements.map(\.path), [[0]])
         XCTAssertEqual(snapshot.elements.map(\.frame), [
-            ElementFrame(x: 100, y: 100, width: 10, height: 10),
             ElementFrame(x: 100, y: 100, width: 10, height: 10),
         ])
         XCTAssertFalse(snapshot.truncated)

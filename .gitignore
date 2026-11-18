@@ -11,3 +11,4 @@ DerivedData/
 supervim-signing/
 xcuserdata/
 .build-tsan/
+.build-cov/

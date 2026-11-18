@@ -37,6 +37,8 @@ public struct AccessibilityElement: Equatable, Sendable {
     public var verticalScroll: ScrollBarReading?
     /// Horizontal bar copied off the key hook. Nil when the reader found none.
     public var horizontalScroll: ScrollBarReading?
+    /// `AXEnabled`. Nil when the element does not say.
+    public var isEnabled: Bool?
 
     public init(
         role: String? = nil,
@@ -48,7 +50,8 @@ public struct AccessibilityElement: Equatable, Sendable {
         children: [AccessibilityElement] = [],
         childrenTruncated: Bool = false,
         verticalScroll: ScrollBarReading? = nil,
-        horizontalScroll: ScrollBarReading? = nil
+        horizontalScroll: ScrollBarReading? = nil,
+        isEnabled: Bool? = nil
     ) {
         self.role = role
         self.subrole = subrole
@@ -60,6 +63,7 @@ public struct AccessibilityElement: Equatable, Sendable {
         self.childrenTruncated = childrenTruncated
         self.verticalScroll = verticalScroll
         self.horizontalScroll = horizontalScroll
+        self.isEnabled = isEnabled
     }
 }
 
@@ -117,37 +121,67 @@ public enum FocusClassification {
         countedClickables(in: window, limits: limits).snapshot
     }
 
+    /// Walks the copied tree once and returns one target per control.
+    ///
+    /// A frame is clipped by the window and by the scroll and web areas the
+    /// element is actually inside. An area elsewhere in the window is not a
+    /// clip: a row scrolled out of its list must not get a label where the
+    /// toolbar is, and a button beside a list must not be cut by that list.
+    ///
+    /// After the walk, nested and stacked candidates are collapsed. See
+    /// `ClickableDedupe`.
     static func countedClickables(
         in window: AccessibilityElement,
         limits: TreeWalkLimits
     ) -> (snapshot: ClickableSnapshot, visited: Int) {
-        var elements: [ClickableElement] = []
+        var candidates: [ClickableCandidate] = []
         var visited = 0
-        var viewports: [HintRect] = []
         let windowRect = window.frame.map(hintRect)
-        let truncated = walk(window, limits: limits) { visit in
+        let truncated = walk(window, limits: limits, context: ClipContext()) { visit, context in
             visited += 1
-            if let frame = visit.node.frame, isViewport(visit.node) {
-                let rect = hintRect(frame)
-                if rect.isUsable {
-                    viewports.append(rect)
-                }
+            if !visit.isRoot, hidesItsChildren(visit.node.role) {
+                noteCandidate(visit, context: context, window: windowRect, into: &candidates)
+                return .skipChildren
             }
-            if !visit.isRoot, isClickable(visit.node), let raw = visit.node.frame.map(hintRect),
-               let visible = HintGeometry.visibleElement(raw, window: windowRect, viewports: viewports) {
-                elements.append(
-                    ClickableElement(
-                        role: visit.node.role,
-                        subrole: visit.node.subrole,
-                        actions: visit.node.actions,
-                        frame: elementFrame(visible),
-                        path: visit.path
-                    )
-                )
+            var next = context
+            if !visit.isRoot,
+               let index = noteCandidate(visit, context: context, window: windowRect, into: &candidates) {
+                next.nearest = index
             }
-            return false
+            next.enter(visit.node)
+            return .descend(next)
         }
-        return (ClickableSnapshot(elements: elements, truncated: truncated), visited)
+        let kept = ClickableDedupe.resolve(candidates, window: windowRect)
+        return (ClickableSnapshot(elements: kept, truncated: truncated), visited)
+    }
+
+    @discardableResult
+    private static func noteCandidate(
+        _ visit: WalkVisit,
+        context: ClipContext,
+        window: HintRect?,
+        into candidates: inout [ClickableCandidate]
+    ) -> Int? {
+        guard let kind = clickableKind(visit.node, context: context),
+              let raw = visit.node.frame.map(hintRect),
+              let visible = HintGeometry.visibleElement(raw, window: window, ancestors: context.ancestors)
+        else {
+            return nil
+        }
+        candidates.append(ClickableCandidate(
+            element: ClickableElement(
+                role: visit.node.role,
+                subrole: visit.node.subrole,
+                actions: visit.node.actions,
+                frame: elementFrame(visible),
+                path: visit.path
+            ),
+            visible: visible,
+            kind: kind,
+            parent: context.nearest,
+            isTextField: InputChoice.isTextInput(role: visit.node.role, subrole: visit.node.subrole)
+        ))
+        return candidates.count - 1
     }
 
     static func editableCandidates(
@@ -156,22 +190,17 @@ public enum FocusClassification {
         inFocusedWindow: Bool
     ) -> (candidates: [InputCandidate], truncated: Bool) {
         var candidates: [InputCandidate] = []
-        var viewports: [HintRect] = []
         let windowRect = window.frame.map(hintRect)
-        let truncated = walk(window, limits: limits) { visit in
-            if let frame = visit.node.frame, isViewport(visit.node) {
-                let rect = hintRect(frame)
-                if rect.isUsable {
-                    viewports.append(rect)
-                }
-            }
+        let truncated = walk(window, limits: limits, context: ClipContext()) { visit, context in
+            var next = context
+            next.enter(visit.node)
             guard !visit.isRoot,
                   editability(of: visit.node) == .editable,
                   InputChoice.isTextInput(role: visit.node.role, subrole: visit.node.subrole),
                   let raw = visit.node.frame.map(hintRect),
-                  let visible = HintGeometry.visibleElement(raw, window: windowRect, viewports: viewports)
+                  let visible = HintGeometry.visibleElement(raw, window: windowRect, ancestors: context.ancestors)
             else {
-                return false
+                return .descend(next)
             }
             candidates.append(
                 InputCandidate(
@@ -184,16 +213,33 @@ public enum FocusClassification {
                     inFocusedWindow: inFocusedWindow
                 )
             )
-            return false
+            return .descend(next)
         }
         return (candidates, truncated)
     }
 
-    private static func isViewport(_ element: AccessibilityElement) -> Bool {
+    /// Roles whose children are parts of the control, or a second way to
+    /// reach nodes the walk already visits. A scroll bar's arrows are not
+    /// targets. A table column lists the same cells as its rows.
+    static func hidesItsChildren(_ role: String?) -> Bool {
+        role == "AXScrollBar" || role == "AXColumn"
+    }
+
+    /// Whether the reader has to ask for the action names of this role.
+    /// Layout containers do not get a label from an action, so the extra
+    /// round trip is skipped for them.
+    public static func wantsActionNames(role: String?) -> Bool {
+        guard let role else {
+            return true
+        }
+        return !structuralRoles.contains(role)
+    }
+
+    static func isViewport(_ element: AccessibilityElement) -> Bool {
         element.role == "AXScrollArea" || element.role == "AXWebArea"
     }
 
-    private static func hintRect(_ frame: ElementFrame) -> HintRect {
+    static func hintRect(_ frame: ElementFrame) -> HintRect {
         HintRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
     }
 
@@ -260,27 +306,71 @@ public enum FocusClassification {
         "AXCheckBox",
         "AXColorWell",
         "AXComboBox",
+        "AXDateField",
         "AXDisclosureTriangle",
+        "AXDockItem",
         "AXIncrementor",
+        "AXLevelIndicator",
         "AXLink",
+        "AXMenuBarItem",
         "AXMenuButton",
         "AXMenuItem",
         "AXPopUpButton",
         "AXRadioButton",
         "AXSlider",
+        "AXSwitch",
         "AXTab",
         "AXTextArea",
         "AXTextField",
+        "AXTimeField",
+        "AXToggle",
     ]
 
     private static let clickableSubroles: Set<String> = [
         "AXCloseButton",
         "AXFullScreenButton",
+        "AXMenuExtra",
         "AXMinimizeButton",
         "AXSearchField",
         "AXSecureTextField",
+        "AXSortButton",
+        "AXSwitch",
+        "AXTabButton",
+        "AXToggle",
         "AXToolbarButton",
         "AXZoomButton",
+    ]
+
+    /// Containers that only lay out other elements. No label comes from an
+    /// action on one of these, so the reader does not ask for their actions.
+    private static let structuralRoles: Set<String> = [
+        "AXApplication",
+        "AXBrowser",
+        "AXColumn",
+        "AXLayoutArea",
+        "AXList",
+        "AXMenuBar",
+        "AXOutline",
+        "AXScrollArea",
+        "AXScrollBar",
+        "AXSplitGroup",
+        "AXSplitter",
+        "AXTabGroup",
+        "AXTable",
+        "AXToolbar",
+        "AXValueIndicator",
+        "AXWebArea",
+        "AXWindow",
+    ]
+
+    /// Roles that hold text or an image. `AXShowMenu` on one of these is the
+    /// context menu every web node has, not a button.
+    private static let passiveRoles: Set<String> = [
+        "AXCell",
+        "AXHeading",
+        "AXImage",
+        "AXStaticText",
+        "AXUnknown",
     ]
 
     private static let containerRoles: Set<String> = [
@@ -306,7 +396,7 @@ public enum FocusClassification {
         "AXWindow",
     ]
 
-    private static let pressActions: Set<String> = ["AXPress", "AXConfirm", "AXPick"]
+    private static let pressActions: Set<String> = ["AXPress", "AXConfirm", "AXPick", "AXOpen"]
 
     private static func isKeyboardOwner(_ role: String?) -> Bool {
         guard let role else { return false }
@@ -323,10 +413,43 @@ public enum FocusClassification {
         return false
     }
 
-    private static func isClickable(_ element: AccessibilityElement) -> Bool {
-        if element.actions.contains(where: { pressActions.contains($0) }) {
-            return true
+    /// How a node became a target. Nil when it is not one.
+    ///
+    /// `control`: the role or subrole is a control.
+    /// `passive`: only an action says so, as on a group with a click handler.
+    /// `weak`: a table or outline row, or a cell with no row above it. These
+    /// select on click. Web tables are left out: every `<tr>` and `<td>`
+    /// has those roles.
+    private static func clickableKind(
+        _ element: AccessibilityElement,
+        context: ClipContext
+    ) -> ClickableKind? {
+        if element.isEnabled == false {
+            return nil
         }
+        let byRole = isControl(element)
+        if element.actions.contains(where: { pressActions.contains($0) }) {
+            return byRole ? .control : .passive
+        }
+        if byRole {
+            return .control
+        }
+        if element.actions.contains("AXShowMenu"), let role = element.role,
+           !containerRoles.contains(role), !passiveRoles.contains(role) {
+            return .passive
+        }
+        if !context.insideWeb {
+            if element.role == "AXRow" {
+                return .weak
+            }
+            if element.role == "AXCell", !context.insideRow {
+                return .weak
+            }
+        }
+        return nil
+    }
+
+    private static func isControl(_ element: AccessibilityElement) -> Bool {
         if let subrole = element.subrole, clickableSubroles.contains(subrole) {
             return true
         }
@@ -338,7 +461,227 @@ public enum FocusClassification {
         }
         return false
     }
+}
 
+enum ClickableKind: Equatable, Sendable {
+    case control
+    case passive
+    case weak
+}
+
+/// What a node inherits from the nodes above it.
+struct ClipContext {
+    /// Frames of the scroll and web areas above the node, outermost first.
+    var ancestors: [HintRect] = []
+    var insideWeb = false
+    var insideRow = false
+    /// Index of the closest candidate above the node.
+    var nearest: Int?
+
+    mutating func enter(_ node: AccessibilityElement) {
+        if FocusClassification.isViewport(node), let frame = node.frame {
+            let rect = FocusClassification.hintRect(frame)
+            if rect.isUsable {
+                ancestors.append(rect)
+            }
+        }
+        if node.role == "AXWebArea" {
+            insideWeb = true
+        }
+        if node.role == "AXRow" {
+            insideRow = true
+        }
+    }
+}
+
+struct ClickableCandidate {
+    var element: ClickableElement
+    var visible: HintRect
+    var kind: ClickableKind
+    /// Closest candidate above this one, kept or not.
+    var parent: Int?
+    var isTextField: Bool
+}
+
+/// Collapses candidates that are one control.
+///
+/// Candidates arrive in tree order, so a parent comes before its children.
+///
+/// 1. A row with a text field inside is dropped. The field stands for the
+///    row, as it does in a Finder list.
+/// 2. A node that is a target only because of an action is dropped when a
+///    kept control, or a kept action-only node, is above it. That is the
+///    text and the icon of a link, which Chromium also marks pressable.
+/// 3. An action-only node with nothing kept above it is dropped when it is a
+///    wrapper: it holds three or more controls, or it holds two or more
+///    targets and covers a large part of the window. A page whose root has
+///    the click handler is the usual case.
+/// 4. A target whose kept children cover it is dropped. A stepper is its
+///    two arrows.
+/// 5. Targets whose visible frames are nearly the same rectangle are one
+///    click point. A control wins over an action-only node, which wins over
+///    a row. Then one with `AXPress` wins. Then the earlier one.
+enum ClickableDedupe {
+    static let sameFrameOverlap = 0.8
+    static let coveredShare = 0.85
+    static let wrapperWindowShare = 0.25
+    static let wrapperMinimumArea = 90_000.0
+    static let wrapperAreaWithoutWindow = 150_000.0
+
+    static func resolve(_ candidates: [ClickableCandidate], window: HintRect?) -> [ClickableElement] {
+        let count = candidates.count
+        guard count > 1 else {
+            return candidates.map(\.element)
+        }
+        var descendants = [Int](repeating: 0, count: count)
+        var controls = [Int](repeating: 0, count: count)
+        var holdsTextField = [Bool](repeating: false, count: count)
+        for index in stride(from: count - 1, through: 0, by: -1) {
+            guard let parent = candidates[index].parent else {
+                continue
+            }
+            descendants[parent] += 1 + descendants[index]
+            controls[parent] += controls[index] + (candidates[index].kind == .control ? 1 : 0)
+            if candidates[index].isTextField || holdsTextField[index] {
+                holdsTextField[parent] = true
+            }
+        }
+
+        var alive = [Bool](repeating: true, count: count)
+        var keptAbove = [Int?](repeating: nil, count: count)
+        let wrapperArea = wrapperThreshold(window)
+        for index in 0..<count {
+            let candidate = candidates[index]
+            var above = candidate.parent
+            while let current = above, !alive[current] {
+                above = candidates[current].parent
+            }
+            keptAbove[index] = above
+            switch candidate.kind {
+            case .control:
+                break
+            case .weak:
+                if holdsTextField[index] {
+                    alive[index] = false
+                } else if let above, candidates[above].kind == .weak {
+                    alive[index] = false
+                }
+            case .passive:
+                if let above, candidates[above].kind != .weak {
+                    alive[index] = false
+                } else if controls[index] >= 3
+                    || (descendants[index] >= 2 && area(candidate.visible) >= wrapperArea) {
+                    alive[index] = false
+                }
+            }
+        }
+
+        var covered = [Double](repeating: 0, count: count)
+        var children = [Int](repeating: 0, count: count)
+        for index in 0..<count where alive[index] {
+            var above = candidates[index].parent
+            while let current = above, !alive[current] {
+                above = candidates[current].parent
+            }
+            guard let above else {
+                continue
+            }
+            covered[above] += overlap(candidates[index].visible, candidates[above].visible)
+            children[above] += 1
+        }
+        for index in 0..<count where alive[index] && children[index] >= 2 {
+            let whole = area(candidates[index].visible)
+            if whole > 0, covered[index] >= whole * coveredShare {
+                alive[index] = false
+            }
+        }
+
+        let order = (0..<count).filter { alive[$0] }.sorted {
+            candidates[$0].visible.x < candidates[$1].visible.x
+        }
+        for (position, first) in order.enumerated() where alive[first] {
+            let frame = candidates[first].visible
+            let reach = max(4, frame.width * 0.25)
+            var next = position + 1
+            while next < order.count {
+                let second = order[next]
+                next += 1
+                let other = candidates[second].visible
+                if other.x - frame.x > reach {
+                    break
+                }
+                guard alive[second], sameTarget(frame, other) else {
+                    continue
+                }
+                if outranks(candidates[second], second, candidates[first], first) {
+                    alive[first] = false
+                    break
+                }
+                alive[second] = false
+            }
+        }
+        return (0..<count).filter { alive[$0] }.map { candidates[$0].element }
+    }
+
+    private static func wrapperThreshold(_ window: HintRect?) -> Double {
+        guard let window, window.isUsable else {
+            return wrapperAreaWithoutWindow
+        }
+        return max(area(window) * wrapperWindowShare, wrapperMinimumArea)
+    }
+
+    private static func outranks(
+        _ lhs: ClickableCandidate,
+        _ lhsIndex: Int,
+        _ rhs: ClickableCandidate,
+        _ rhsIndex: Int
+    ) -> Bool {
+        let left = rank(lhs.kind)
+        let right = rank(rhs.kind)
+        if left != right {
+            return left > right
+        }
+        let leftPress = lhs.element.actions.contains("AXPress")
+        let rightPress = rhs.element.actions.contains("AXPress")
+        if leftPress != rightPress {
+            return leftPress
+        }
+        return lhsIndex < rhsIndex
+    }
+
+    private static func rank(_ kind: ClickableKind) -> Int {
+        switch kind {
+        case .control:
+            return 3
+        case .passive:
+            return 2
+        case .weak:
+            return 1
+        }
+    }
+
+    private static func sameTarget(_ lhs: HintRect, _ rhs: HintRect) -> Bool {
+        let shared = overlap(lhs, rhs)
+        guard shared > 0 else {
+            return false
+        }
+        let union = area(lhs) + area(rhs) - shared
+        return union > 0 && shared / union >= sameFrameOverlap
+    }
+
+    private static func overlap(_ lhs: HintRect, _ rhs: HintRect) -> Double {
+        let width = min(lhs.x + lhs.width, rhs.x + rhs.width) - max(lhs.x, rhs.x)
+        let height = min(lhs.y + lhs.height, rhs.y + rhs.height) - max(lhs.y, rhs.y)
+        guard width > 0, height > 0 else {
+            return 0
+        }
+        return width * height
+    }
+
+    private static func area(_ rect: HintRect) -> Double {
+        let value = rect.width * rect.height
+        return value.isFinite && value > 0 ? value : 0
+    }
 }
 
 public struct ClickableElement: Equatable, Sendable {
@@ -873,6 +1216,15 @@ private struct WalkVisit {
     var holeBefore: Bool
 }
 
+/// What the walk does after one node.
+/// `descend` hands the context to that node's children. `skipChildren`
+/// leaves them out on purpose, which is not a truncation.
+private enum WalkStep<Context> {
+    case descend(Context)
+    case skipChildren
+    case stop
+}
+
 private final class WalkCursor {
     var visited = 0
     var truncated = false
@@ -885,34 +1237,43 @@ private final class WalkCursor {
 }
 
 /// Returns whether the walk omitted part of the tree.
-private func walk(
+private func walk<Context>(
     _ root: AccessibilityElement,
     limits: TreeWalkLimits,
-    _ body: (WalkVisit) -> Bool
+    context: Context,
+    _ body: (WalkVisit, Context) -> WalkStep<Context>
 ) -> Bool {
     let cursor = WalkCursor(limits: limits)
-    visit(root, path: [], depth: 0, isRoot: true, cursor: cursor, body: body)
+    visit(root, path: [], depth: 0, isRoot: true, context: context, cursor: cursor, body: body)
     return cursor.truncated
 }
 
-private func visit(
+private func visit<Context>(
     _ node: AccessibilityElement,
     path: [Int],
     depth: Int,
     isRoot: Bool,
+    context: Context,
     cursor: WalkCursor,
-    body: (WalkVisit) -> Bool
+    body: (WalkVisit, Context) -> WalkStep<Context>
 ) {
     if cursor.stopped {
         return
     }
     cursor.visited += 1
-    let stop = body(
-        WalkVisit(node: node, path: path, isRoot: isRoot, holeBefore: cursor.truncated)
+    let step = body(
+        WalkVisit(node: node, path: path, isRoot: isRoot, holeBefore: cursor.truncated),
+        context
     )
-    if stop {
+    let inherited: Context
+    switch step {
+    case .stop:
         cursor.stopped = true
         return
+    case .skipChildren:
+        return
+    case .descend(let next):
+        inherited = next
     }
     if node.children.isEmpty {
         if node.childrenTruncated {
@@ -930,6 +1291,7 @@ private func visit(
             path: path + [index],
             depth: depth + 1,
             isRoot: false,
+            context: inherited,
             cursor: cursor,
             body: body
         )
