@@ -21,6 +21,7 @@
 | [稳定签名](stable-signing.md) | 为什么升级后权限能保留，证书怎么生成和配置 |
 | [界面打磨](ui-polish.md) | 视觉语言，以及 `ui-polish/` 里的预览图怎么来的 |
 | [提示标签改版](label-redesign.md) | 四个方案的字体、字号、颜色和形状，`label-redesign/` 里的预览图。已选定并发布方案 A |
+| [应用图标预览](icon) | 键帽图标的 1024 原图、各尺寸的明暗对照、Finder 和 Dock 示意 |
 
 ## 过程记录
 
@@ -28,7 +29,7 @@
 | --- | --- |
 | [实现过程记录](history.md) | 原来写在 README 里的各任务和 v0.1.5 说明 |
 | [v0.1.5 证据](v0.1.5-evidence.md) | 响应、偶发无响应、标签覆盖与重复、外观 |
-| [应用图标测试记录](app-icon-test-evidence.md) | 图标的生成和校验 |
+| [应用图标测试记录](app-icon-test-evidence.md) | 第一版图标的生成和校验；打包方式沿用至今 |
 
 任务测试记录：
 [1](task1-test-evidence.md) ·

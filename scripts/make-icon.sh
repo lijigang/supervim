@@ -3,6 +3,8 @@
 # The source geometry lives in scripts/render_icon.py, which also writes
 # Resources/AppIcon.svg. iconutil exists only on macOS; elsewhere the same
 # script packs a PNG-based icns that macOS 13+ can read.
+# `--artifacts docs/icon` also redraws the previews. `--check` only reads the
+# committed files.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
