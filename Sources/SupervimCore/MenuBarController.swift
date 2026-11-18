@@ -3,6 +3,13 @@ import Foundation
 /// Frontmost bundle id supplied by the app. An empty string means it could not be named.
 public protocol FrontmostBundleProviding: Sendable {
     func frontmostBundleIdentifier() -> String
+    func frontmostApplicationName() -> String
+}
+
+extension FrontmostBundleProviding {
+    public func frontmostApplicationName() -> String {
+        ""
+    }
 }
 
 public enum MenuCommandKind: Equatable, Sendable {
@@ -94,8 +101,10 @@ public final class MenuBarController<Clock: KeyTimeSource>: @unchecked Sendable 
     public init(
         repository: SettingsRepository,
         clock: Clock,
-        frontmost: any FrontmostBundleProviding
+        frontmost: any FrontmostBundleProviding,
+        ownBundleIdentifier: String = ""
     ) throws {
+        _ = ownBundleIdentifier
         let loaded = try repository.load()
         self.repository = repository
         self.frontmost = frontmost
