@@ -184,13 +184,34 @@ final class ReleasePackagingTests: XCTestCase {
         XCTAssertTrue(text.contains("make-icon.sh"))
     }
 
-    func testAppIconSourceDrawsOnlyTheCursorBlock() throws {
+    func testAppIconSourceDrawsTheKeycapTheLetterAndTheHintLabel() throws {
         let text = try packagingText("Resources/AppIcon.svg")
-        XCTAssertTrue(text.contains("1024"))
-        XCTAssertTrue(text.contains("#34C759"))
-        XCTAssertTrue(text.contains("#F7F7F8"))
-        XCTAssertTrue(text.contains("#E9E9EC"))
+        XCTAssertTrue(text.contains("viewBox=\"0 0 1024 1024\""))
+        let layers = [
+            "ground-shadow", "keycap-sides", "keycap-face",
+            "f-side", "f-face", "label-lip", "label-face", "label-letter",
+        ]
+        for layer in layers {
+            XCTAssertTrue(text.contains("id=\"\(layer)\""), layer)
+        }
+        XCTAssertTrue(text.contains("#E9E9EC"), "keycap gray")
+        XCTAssertTrue(text.contains("#3C9647"), "green f")
+        XCTAssertTrue(text.contains("#FFD83A"), "yellow label")
+        XCTAssertTrue(text.contains("#24421B"), "dark F")
         XCTAssertFalse(text.contains("<text"))
+        XCTAssertFalse(text.contains("#34C759"), "the cursor block of the first icon is gone")
+    }
+
+    func testCommittedIconPreviewsAreReadable() throws {
+        let root = repoRoot().appendingPathComponent("docs/icon")
+        let master = try pngHeader(Data(contentsOf: root.appendingPathComponent("preview-1024.png")))
+        XCTAssertEqual(master.width, 1024)
+        XCTAssertEqual(master.height, 1024)
+        for name in ["preview-sizes.png", "preview-dock-finder.png"] {
+            let header = try pngHeader(Data(contentsOf: root.appendingPathComponent(name)))
+            XCTAssertGreaterThanOrEqual(header.width, 600, name)
+            XCTAssertGreaterThanOrEqual(header.height, 600, name)
+        }
     }
 
     func testCommittedIconFilesAreTheStandardSizes() throws {
