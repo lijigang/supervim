@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Draw the Supervim app icon and check the committed artwork.
 
-The icon is one chunky light-gray keycap, tilted a few degrees, with a bold
-green lowercase f on its face and a yellow hint label with a dark F floating
-over its top-left corner. Every outline is straight lines and circular arcs,
-and the SVG and the bitmaps are written from the same outlines.
+The icon is one chunky light-gray keycap seen straight on: an upright rounded
+square, the same left and right, with an even edge showing under it. A bold
+green lowercase f stands in the middle of its face and a yellow hint label
+with a dark F floats over its top-left corner. Every outline is straight
+lines and circular arcs, and the SVG and the bitmaps are written from the
+same outlines.
 
 The slots use four drawings:
 
 - master: the 1024 canvas, kept inside the 824 macOS icon grid. Every slot of
   128 pixels and up.
-- compact: the master with a larger label, a heavier letter and a deeper side
-  on the f. The 64-pixel slot, which is 32 points at 2x.
-- medium: upright, on the whole pixels of a 32 grid. The 32-point slot at 1x.
-- small: upright, on a 16 grid. The 16-point slot. At 2x it gains the letter
-  on the label.
+- compact: the master with a larger label and a heavier letter. The 64-pixel
+  slot, which is 32 points at 2x.
+- medium: redrawn on the whole pixels of a 32 grid. The 32-point slot at 1x.
+- small: redrawn on a 16 grid. The 16-point slot. At 2x it gains the letter on
+  the label.
 
 Drawing needs numpy. `--check` reads the committed files with the standard
 library only. `--artifacts DIR` also writes the previews; the Finder and Dock
@@ -48,12 +50,6 @@ YELLOW_LIT = "#FFDF52"
 YELLOW_SIDE = "#C79C08"
 LETTER = "#24421B"
 BLACK = "#000000"
-
-# Shapes are measured on the reference image's own 1024 canvas, where the
-# drawing is centered on REFERENCE_CENTER. FIT scales it to fill the height of
-# the icon grid and moves that point to the canvas center.
-REFERENCE_CENTER = (517.2, 495.1)
-FIT = 1.245
 
 # iconutil's iconset names, the drawing each slot uses, its pixel size, and
 # the PNG-flavored icns type it becomes.
@@ -182,19 +178,6 @@ def bounds(subpaths):
             xs.append(x)
             ys.append(y)
     return min(xs), min(ys), max(xs), max(ys)
-
-
-def frame(origin, x_degrees: float, y_degrees: float, scale: float = 1.0):
-    """Map local (x, y) to the canvas. Each axis is turned clockwise on its own."""
-    xr = math.radians(x_degrees)
-    yr = math.radians(y_degrees)
-    ux = (math.cos(xr) * scale, math.sin(xr) * scale)
-    uy = (-math.sin(yr) * scale, math.cos(yr) * scale)
-
-    def place(x: float, y: float):
-        return (origin[0] + x * ux[0] + y * uy[0], origin[1] + x * ux[1] + y * uy[1])
-
-    return place
 
 
 def rounded_polygon(points, radii):
@@ -370,100 +353,59 @@ def layer(name, subpaths, paint, opacity: float = 1.0, blur: float = 0.0, clip=N
     }
 
 
-def fit(point):
-    return (
-        CANVAS / 2 + (point[0] - REFERENCE_CENTER[0]) * FIT,
-        CANVAS / 2 + (point[1] - REFERENCE_CENTER[1]) * FIT,
-    )
-
-
 def master_scene(compact: bool = False):
-    """The full drawing on the 1024 canvas.
+    """The full drawing on the 1024 canvas, seen straight on.
 
-    `compact` is the same drawing prepared for 64 pixels: a larger label with
-    a heavier letter and a deeper side on the f, so they survive the scale.
+    Every edge that matters sits on a multiple of 16, which is a whole pixel
+    at 64 and up. That keeps the small bitmaps sharp, and it is why the face
+    and the body can share their two vertical sides without the darker body
+    showing through as a hairline. `compact` is the same drawing prepared for
+    64 pixels: a larger label with a heavier letter, so they survive the scale.
     """
-    k = FIT
-
-    # Keycap. The face and the foot are the reference's two quadrilaterals,
-    # listed clockwise from the top left. The body is the hull of both with
-    # one corner radius, so the face outline and the silhouette share arcs.
-    radius = 62 * k
-    face_corners = [fit(p) for p in ((262, 224), (798, 258), (757, 702), (206, 655))]
-    foot_corners = [fit(p) for p in ((276, 340), (833, 372), (770, 833), (214, 764))]
-    face_centers = offset_polygon(face_corners, -radius)
-    foot_centers = offset_polygon(foot_corners, -radius)
+    # Keycap: a rounded square face, and the same shape 64 lower as the edge
+    # that shows under it. It is centered on the canvas, left to right.
+    radius = 112
+    face_centers = box_centers(144, 144, 880, 832, radius)
+    foot_centers = box_centers(144, 208, 880, 896, radius)
     key_top = round_hull(face_centers, radius)
-    key_shoulder = round_hull(tuck(face_centers, foot_centers, 10 * k) + tuck(face_centers, foot_centers, 26 * k), radius)
-    key_body = round_hull(tuck(face_centers, foot_centers, 10 * k) + foot_centers, radius)
+    key_shoulder = round_hull(tuck(face_centers, foot_centers, 8) + tuck(face_centers, foot_centers, 20), radius)
+    key_body = round_hull(tuck(face_centers, foot_centers, 8) + foot_centers, radius)
+    body_paint = linear((0, 832), (0, 896), [(0.0, KEY_SIDE_LIT), (0.5, KEY_SIDE_MID), (1.0, KEY_SIDE_SHADE)])
+    top_paint = linear((0, 144), (0, 832), [(0.0, KEY_TOP_LIT), (1.0, KEY_TOP_SHADE)])
 
-    def face(x: float, y: float):
-        """Point on the face; x and y run 0..1 from its top-left corner."""
-        top = add(mul(face_corners[0], 1 - x), mul(face_corners[1], x))
-        bottom = add(mul(face_corners[3], 1 - x), mul(face_corners[2], x))
-        return add(mul(top, 1 - y), mul(bottom, y))
+    # Lowercase f, upright. Its box, crossbar to hook, is centered on the face.
+    f_face = upright_f(432, 544, 272, 688, 640, 352, 384, 624, 416, 496, outer=120, inner=40, tip=14, joint=6)
+    f_side = extrusion_side(f_face, (0, 16))
+    f_paint = linear((0, 272), (0, 688), [(0.0, GREEN_LIT), (1.0, GREEN)])
 
-    # The sides shade across the direction the keycap is extruded in, so the
-    # rounded front-right corner turns from the front tone to the right tone.
-    drop = unit(sub(foot_centers[2], face_centers[2]))
-    across = (drop[1], -drop[0])
-    left = face_centers[3]
-    corner = face_centers[2]
-    span = dot(sub(corner, left), across) + radius * 1.15
-    side_end = add(left, mul(across, span))
-    turn = dot(sub(corner, left), across) / span
-    body_paint = linear(
-        left,
-        side_end,
-        [(0.0, KEY_SIDE_LIT), (0.45, KEY_SIDE_MID), (turn, KEY_SIDE_MID), (1.0, KEY_SIDE_SHADE)],
-    )
-    top_paint = linear(face(0.05, 1.0), face(0.95, 0.0), [(0.0, KEY_TOP_LIT), (1.0, KEY_TOP_SHADE)])
-
-    # Lowercase f. Its crossbar follows the keycap and its stem leans a
-    # little further, like the reference.
-    glyph = frame(fit((467, 296.5)), 3.2, 10.0, k)
-    f_points = [
-        (0, 0), (142, 0), (142, 62), (80, 62), (80, 95), (138, 95), (138, 151),
-        (80, 151), (80, 300), (0, 300), (0, 151), (-42, 151), (-42, 95), (0, 95),
-    ]
-    f_radii = [88, 13, 13, 30, 4, 13, 13, 4, 13, 13, 4, 13, 13, 4]
-    f_face = rounded_polygon([glyph(x, y) for x, y in f_points], [r * k for r in f_radii])
-    f_depth = (11 * k, 16 * k) if compact else (7 * k, 10 * k)
-    f_side = extrusion_side(f_face, f_depth)
-    f_paint = linear(glyph(-42, 0), glyph(142, 300), [(0.0, GREEN_LIT), (1.0, GREEN)])
-
-    # Hint label, turned 9 degrees the other way, with a lip under it.
-    grow = 1.2 if compact else 1.0
-    label = frame(fit((319, 239) if compact else (311, 227)), -9.0, -9.0, k * grow)
-    label_radius = 27 * k * grow
-    label_corners = [label(-98, -52), label(98, -52), label(98, 52), label(-98, 52)]
-    label_centers = offset_polygon(label_corners, -label_radius)
-    lip = (1 * k * grow, 13 * k * grow)
-    label_top = round_hull(label_centers, label_radius)
-    lip_centers = [add(c, lip) for c in label_centers]
-    label_body = round_hull(tuck(label_centers, lip_centers, 6 * k) + lip_centers, label_radius)
-    label_paint = linear(label(0, -52), label(0, 52), [(0.0, YELLOW_LIT), (1.0, YELLOW)])
+    # Hint label over the top-left corner, with a lip under it like the keycap.
     if compact:
-        letter_points = [
-            (-28, -36), (26, -36), (26, -15), (-5, -15), (-5, -6), (21, -6),
-            (21, 14), (-5, 14), (-5, 36), (-28, 36),
-        ]
+        label_box, label_radius = (112, 112, 416, 256), 40
+        letter = rounded_polygon(
+            [(224, 144), (304, 144), (304, 160), (256, 160), (256, 176), (288, 176), (288, 192), (256, 192), (256, 224), (224, 224)],
+            1,
+        )
     else:
-        letter_points = [
-            (-27, -34), (23, -34), (23, -18), (-10, -18), (-10, -6), (19, -6),
-            (19, 9), (-10, 9), (-10, 34), (-27, 34),
-        ]
-    letter = rounded_polygon([label(x, y) for x, y in letter_points], 2.5 * k)
+        label_box, label_radius = (104, 104, 352, 240), 36
+        letter = rounded_polygon(
+            [(200, 132), (256, 132), (256, 152), (222, 152), (222, 163), (248, 163), (248, 182), (222, 182), (222, 212), (200, 212)],
+            3,
+        )
+    label_centers = box_centers(*label_box, label_radius)
+    lip_centers = [add(c, (0, 16)) for c in label_centers]
+    label_top = round_hull(label_centers, label_radius)
+    label_body = round_hull(tuck(label_centers, lip_centers, 4) + lip_centers, label_radius)
+    label_paint = linear((0, label_box[1]), (0, label_box[3]), [(0.0, YELLOW_LIT), (1.0, YELLOW)])
 
     return {
         "size": CANVAS,
         "layers": [
-            layer("ground-shadow", [move(s, (0, 18)) for s in (key_body, key_top, label_body, label_top)], solid(BLACK), 0.30, 15.0),
+            layer("ground-shadow", [move(s, (0, 16)) for s in (key_body, key_top, label_body, label_top)], solid(BLACK), 0.30, 14.0),
             layer("keycap-sides", [key_body], body_paint),
             layer("keycap-shoulder", [key_shoulder], solid(KEY_SHOULDER)),
             layer("keycap-face", [key_top], top_paint),
-            layer("label-shadow", [move(label_body, (7 * k, 14 * k))], solid(BLACK), 0.22, 8.0 * k, clip="keycap"),
-            layer("f-shadow", [move(f_face, (11 * k, 15 * k))], solid(BLACK), 0.26, 6.0 * k, clip="face"),
+            layer("label-shadow", [move(label_body, (0, 16))], solid(BLACK), 0.22, 10.0, clip="keycap"),
+            layer("f-shadow", [move(f_face, (0, 24))], solid(BLACK), 0.22, 8.0, clip="face"),
             layer("f-side", f_side, solid(GREEN_SIDE)),
             layer("f-face", [f_face], f_paint),
             layer("label-lip", [label_body], solid(YELLOW_SIDE)),
@@ -483,15 +425,15 @@ def box_centers(x0: float, y0: float, x1: float, y1: float, radius: float):
     ]
 
 
-def upright_f(stem_left, stem_right, top, bottom, hook_right, hook_bottom, bar_left, bar_right, bar_top, bar_bottom, outer, inner, tip):
-    """Lowercase f on whole pixels: a stem, a hook to the right, a crossbar."""
+def upright_f(stem_left, stem_right, top, bottom, hook_right, hook_bottom, bar_left, bar_right, bar_top, bar_bottom, outer, inner, tip, joint=0):
+    """Lowercase f: a stem, a hook to the right, a crossbar."""
     points = [
         (stem_left, top), (hook_right, top), (hook_right, hook_bottom), (stem_right, hook_bottom),
         (stem_right, bar_top), (bar_right, bar_top), (bar_right, bar_bottom), (stem_right, bar_bottom),
         (stem_right, bottom), (stem_left, bottom), (stem_left, bar_bottom), (bar_left, bar_bottom),
         (bar_left, bar_top), (stem_left, bar_top),
     ]
-    radii = [outer, tip, tip, inner, 0, tip, tip, 0, tip, tip, 0, tip, tip, 0]
+    radii = [outer, tip, tip, inner, joint, tip, tip, joint, tip, tip, joint, tip, tip, joint]
     return rounded_polygon(points, radii)
 
 
@@ -505,18 +447,17 @@ def upright_letter(left, top, stem, bar, width, middle_width, height, middle_top
 
 
 def medium_scene():
-    """The 32-pixel drawing: upright, every edge on a whole pixel."""
-    radius = 5
-    face_centers = box_centers(4, 7, 28, 25, radius)
-    foot_centers = box_centers(4, 12, 30, 30, radius)
+    """The 32-pixel drawing: the same view, every edge on a whole pixel."""
+    radius = 4
+    face_centers = box_centers(4, 5, 28, 26, radius)
+    foot_centers = box_centers(4, 7, 28, 28, radius)
     key_top = round_hull(face_centers, radius)
-    key_shoulder = round_hull(tuck(face_centers, foot_centers, 0.5) + tuck(face_centers, foot_centers, 1.2), radius)
     key_body = round_hull(tuck(face_centers, foot_centers, 0.5) + foot_centers, radius)
-    body_paint = linear((4, 0), (30, 0), [(0.0, KEY_SIDE_LIT), (0.5, KEY_SIDE_MID), (0.8, KEY_SIDE_MID), (1.0, KEY_SIDE_SHADE)])
-    top_paint = linear((5, 25), (27, 7), [(0.0, KEY_TOP_LIT), (1.0, KEY_TOP_SHADE)])
+    body_paint = linear((0, 26), (0, 28), [(0.0, KEY_SIDE_MID), (1.0, KEY_SIDE_SHADE)])
+    top_paint = linear((0, 5), (0, 26), [(0.0, KEY_TOP_LIT), (1.0, KEY_TOP_SHADE)])
 
-    f_face = upright_f(15, 19, 9, 22, 23, 12, 12, 22, 14, 17, outer=4, inner=1, tip=0.75)
-    f_side = extrusion_side(f_face, (1, 1))
+    f_face = upright_f(14, 18, 10, 23, 22, 13, 11, 21, 15, 18, outer=4, inner=1, tip=0.75)
+    f_side = extrusion_side(f_face, (0, 1))
 
     label_radius = 3
     label_centers = box_centers(1, 1, 13, 10, label_radius)
@@ -530,9 +471,8 @@ def medium_scene():
         "layers": [
             layer("ground-shadow", [move(s, (0, 1)) for s in (key_body, key_top, label_body, label_top)], solid(BLACK), 0.34, 0.9),
             layer("keycap-sides", [key_body], body_paint),
-            layer("keycap-shoulder", [key_shoulder], solid(KEY_SHOULDER)),
             layer("keycap-face", [key_top], top_paint),
-            layer("label-shadow", [move(label_body, (0.5, 1))], solid(BLACK), 0.22, 0.7, clip="keycap"),
+            layer("label-shadow", [move(label_body, (0, 1))], solid(BLACK), 0.22, 0.7, clip="keycap"),
             layer("f-side", f_side, solid(GREEN_SIDE)),
             layer("f-face", [f_face], solid(GREEN)),
             layer("label-lip", [label_body], solid(YELLOW_SIDE)),
@@ -545,20 +485,20 @@ def medium_scene():
 
 def small_scene(fine: bool = False):
     """The 16-point drawing. `fine` is the 2x slot, which has room for the
-    letter on the label and a thin side on the f."""
+    letter on the label and a thin edge under the f."""
     radius = 2.5
-    face_centers = box_centers(2, 3, 14, 12, radius)
-    foot_centers = box_centers(2, 6, 15, 15, radius)
+    face_centers = box_centers(2, 3, 14, 13, radius)
+    foot_centers = box_centers(2, 5, 14, 15, radius)
     key_top = round_hull(face_centers, radius)
     key_body = round_hull(tuck(face_centers, foot_centers, 0.25) + foot_centers, radius)
-    body_paint = linear((2, 0), (15, 0), [(0.0, KEY_SIDE_LIT), (0.5, KEY_SIDE_MID), (0.8, KEY_SIDE_MID), (1.0, KEY_SIDE_SHADE)])
-    top_paint = linear((3, 12), (13, 3), [(0.0, KEY_TOP_LIT), (1.0, KEY_TOP_SHADE)])
+    body_paint = linear((0, 13), (0, 15), [(0.0, KEY_SIDE_MID), (1.0, KEY_SIDE_SHADE)])
+    top_paint = linear((0, 3), (0, 13), [(0.0, KEY_TOP_LIT), (1.0, KEY_TOP_SHADE)])
 
-    f_face = upright_f(8, 10, 4, 11, 13, 6, 6, 11, 7, 9, outer=2, inner=0.5, tip=0.25)
+    f_face = upright_f(7, 9, 4, 12, 12, 6, 5, 10, 8, 10, outer=2, inner=0.5, tip=0.25)
 
     label_radius = 1.5
-    label_centers = box_centers(1, 1, 7, 5, label_radius)
-    lip_centers = box_centers(1, 2, 7, 6, label_radius)
+    label_centers = box_centers(1, 1, 6, 5, label_radius)
+    lip_centers = box_centers(1, 2, 6, 6, label_radius)
     label_top = round_hull(label_centers, label_radius)
     label_body = round_hull(tuck(label_centers, lip_centers, 0.25) + lip_centers, label_radius)
 
@@ -568,14 +508,14 @@ def small_scene(fine: bool = False):
         layer("keycap-face", [key_top], top_paint),
     ]
     if fine:
-        layers.append(layer("f-side", extrusion_side(f_face, (0.5, 0.5)), solid(GREEN_SIDE)))
+        layers.append(layer("f-side", extrusion_side(f_face, (0, 0.5)), solid(GREEN_SIDE)))
     layers += [
         layer("f-face", [f_face], solid(GREEN)),
         layer("label-lip", [label_body], solid(YELLOW_SIDE)),
         layer("label-face", [label_top], solid(YELLOW)),
     ]
     if fine:
-        layers.append(layer("label-letter", upright_letter(3, 1.5, 1, 0.5, 2.5, 2, 3, 1), solid(LETTER)))
+        layers.append(layer("label-letter", upright_letter(2.5, 1.5, 1, 0.5, 2.5, 2, 3, 1), solid(LETTER)))
     return {"size": 16, "layers": layers, "clips": {}}
 
 
@@ -1277,29 +1217,44 @@ def same_drawing(expected: str, found: str, tolerance: float = 0.011) -> bool:
 
 
 def check_master(rows, name: str) -> None:
-    def at(point):
-        x, y = fit(point)
-        return pixel(rows, int(x), int(y))
+    def at(x: int, y: int):
+        return pixel(rows, x, y)
 
     for corner in ((0, 0), (1023, 0), (0, 1023), (1023, 1023)):
-        require(pixel(rows, *corner)[3] == 0, f"{name}: canvas corner {corner} is not transparent")
-    face, face_far = at((300, 600)), at((700, 330))
-    require(is_gray(face) and is_gray(face_far), f"{name}: keycap face is tinted: {face} {face_far}")
-    require(face[0] >= 215 and face_far[0] >= 205, f"{name}: keycap face is too dark: {face} {face_far}")
-    require(face[0] > face_far[0], f"{name}: keycap face does not lighten toward the lower left")
-    front, right = at((480, 760)), at((800, 560))
-    require(is_gray(front) and is_gray(right), f"{name}: keycap sides are tinted: {front} {right}")
-    require(face_far[0] - front[0] >= 40, f"{name}: front side is not darker than the face: {front}")
-    require(front[0] - right[0] >= 12, f"{name}: right side is not darker than the front: {front} {right}")
-    require(is_green(at((460, 500))), f"{name}: the f is not green: {at((460, 500))}")
-    require(is_green(at((560, 330))), f"{name}: the f has no hook: {at((560, 330))}")
-    require(is_gray(at((560, 380))), f"{name}: the f is closed under its hook: {at((560, 380))}")
-    require(is_yellow(at((250, 240))), f"{name}: the label is not yellow: {at((250, 240))}")
-    require(is_letter(at((293, 230))), f"{name}: the label has no dark letter: {at((293, 230))}")
+        require(at(*corner)[3] == 0, f"{name}: canvas corner {corner} is not transparent")
+
+    upper, lower = at(700, 240), at(300, 760)
+    require(is_gray(upper) and is_gray(lower), f"{name}: keycap face is tinted: {upper} {lower}")
+    require(upper[0] >= 215 and lower[0] >= 205, f"{name}: keycap face is too dark: {upper} {lower}")
+    require(upper[0] > lower[0], f"{name}: keycap face does not lighten toward the top")
+    edge = at(512, 880)
+    require(is_gray(edge), f"{name}: keycap edge is tinted: {edge}")
+    require(lower[0] - edge[0] >= 40, f"{name}: bottom edge is not darker than the face: {edge}")
+
+    # Straight on: both sides are vertical, and the keycap mirrors left to right.
+    for y in (300, 500, 700):
+        require(
+            at(143, y)[3] < 250 and at(144, y)[3] == 255 and at(879, y)[3] == 255 and at(880, y)[3] < 250,
+            f"{name}: the keycap sides are not upright at row {y}",
+        )
+    for y in (760, 800, 850, 880, 895, 910):
+        for x in range(100, 512, 4):
+            here, there = at(x, y), at(1023 - x, y)
+            require(
+                all(abs(a - b) <= 2 for a, b in zip(here, there)),
+                f"{name}: the keycap is not symmetric at ({x}, {y}): {here} {there}",
+            )
+
+    require(is_green(at(488, 600)), f"{name}: the f is not green: {at(488, 600)}")
+    require(is_green(at(600, 310)), f"{name}: the f has no hook: {at(600, 310)}")
+    require(is_green(at(400, 456)) and is_green(at(600, 456)), f"{name}: the f has no crossbar")
+    require(is_gray(at(600, 384)), f"{name}: the f is closed under its hook: {at(600, 384)}")
+    require(is_gray(at(400, 330)), f"{name}: the f has a hook on the left: {at(400, 330)}")
+    require(is_yellow(at(140, 172)), f"{name}: the label is not yellow: {at(140, 172)}")
+    require(is_letter(at(211, 172)), f"{name}: the label has no dark letter: {at(211, 172)}")
     shadow = False
-    x, y = fit((480, 800))
-    for row in range(int(y), 1020):
-        red, green, blue, alpha = pixel(rows, int(x), row)
+    for row in range(897, 1020):
+        red, green, blue, alpha = at(512, row)
         if 8 <= alpha <= 160 and max(red, green, blue) < 60:
             shadow = True
             break
@@ -1308,10 +1263,10 @@ def check_master(rows, name: str) -> None:
 
 # Fewest green, yellow and letter pixels each small slot may have.
 SMALL_SLOTS = {
-    "icp4": (20, 16, 0),
-    "ic11": (80, 55, 12),
+    "icp4": (20, 14, 0),
+    "ic11": (85, 45, 12),
     "icp5": (64, 64, 11),
-    "ic12": (160, 100, 10),
+    "ic12": (190, 115, 10),
 }
 
 
