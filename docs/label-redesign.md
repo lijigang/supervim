@@ -52,17 +52,21 @@ Sizes are the body without the clear shadow margin, measured with the real fonts
 
 ## 两种指向方式 / Two ways to point
 
-**角（A、C）。** 标签和 v0.1.5 一样压在目标的左上角，外框位置没有变。底的左上角不是圆角，而是拉长成一个尖，尖正好落在目标的左上角上。优点是标签永远在自己的目标上，密集的列表里不会认错；代价是小图标会被盖住。
+**角（A、C）。** 标签和 v0.1.5 一样压在目标的左上角，外框位置没有变。底的左上角不是圆角，而是拉长成一个尖，尖正好落在目标的左上角上。优点是标签永远在自己的目标上，密集的列表里不会认错；代价是小图标会被盖住，而且行距 22pt 的列表里，下一行标签的尖会压到上一行标签的左下角（见对比图的「after Z」一行）。
 
 **小尖（B、D）。** 标签挂在目标下面，上边一个小三角顶在目标上，图标和文字开头都看得见（Homerow 的做法）。尖在窄目标的正中、宽目标起始 24pt 处；高的行（比如聊天列表的一行）尖最多往下 28pt，所以标签留在这一行里面。屏幕底边放不下时标签翻到目标上面，尖朝下。
 
 挂在下面有一个真问题：紧凑的列表里，一行的下面就是下一行，标签会被看成下一行的。所以规则是：**下面没有别的可点目标时才挂在下面；否则标签落在自己目标的起始处，不画尖。** 包住这个目标的大目标（比如一行里的按钮，行本身也是目标）不算「别的」。键入前缀以后，剩下的标签按整次扫描的目标来判断，所以不会因为邻居消失而跳位置。
 
-**Corner (A, C).** The label lies on the target's top-left corner as in v0.1.5; its frame does not move. The body's top-left corner is not rounded but drawn out to a point that lands exactly on the target's corner. The label is always on its own target, so a dense list cannot be misread. The cost is that a small icon is covered.
+结果是同一屏上有两种位置：工具栏、导航、标签页签、聊天行里的标签带尖，列表中间几行和下面紧挨着输入框的一排图标上的标签不带尖、压在目标上（这时图标同样被盖住）。预览图里浏览器侧栏的六行就是这样：前五行压在行首，最后一行下面是空的，挂在下面。
+
+**Corner (A, C).** The label lies on the target's top-left corner as in v0.1.5; its frame does not move. The body's top-left corner is not rounded but drawn out to a point that lands exactly on the target's corner. The label is always on its own target, so a dense list cannot be misread. The cost is that a small icon is covered, and in a list with a 22pt pitch the point of one label overlaps the bottom-left of the label above it (see the "after Z" rows of the comparison).
 
 **Caret (B, D).** The label hangs under the target with a small triangle touching it, so the icon and the start of the text stay visible, as in Homerow. The tip is in the middle of a narrow target and 24pt along a wide one. In a tall row, such as a chat list row, the tip goes at most 28pt down, so the label stays inside the row. At the bottom of a screen the label goes above the target and the caret points down.
 
 Hanging below has one real problem: in a tight list the place under a row is the next row, and the label reads as that row's. So the rule is: **a label hangs below only when no other target is there; otherwise it rests on the leading edge of its own target and has no caret.** A larger target that holds this one, as a row holds its button, does not count as another. After a key the remaining labels are judged against the targets of the whole pass, so they do not jump when their neighbours go away.
+
+So one screen has two placements. Labels on toolbars, navigation links, tags and chat rows have a caret. Labels on the middle rows of a list, and on a row of icons with a text field right under it, have none and lie on the target, where they cover the icon as a corner label would. The six sidebar links of the browser preview show it: five labels rest on the start of their rows, and the last, with nothing under it, hangs below.
 
 ## A · Amber tag
 
@@ -165,16 +169,18 @@ The setting is read once when the overlay is first made, so quit and reopen Supe
 - 背景是 `Tools/LabelPreviews` 里用 AppKit 画的两个假窗口：一个浏览器（标签栏、工具栏、站点导航、带行内链接的文章、标签、紧凑的侧栏列表、表单），一个微信式的聊天客户端（图标栏、会话列表、对话、输入区）。里面的名字、网址和消息都是编的。
 - 可点的目标和画出来的东西是同一遍代码记下来的，再交给应用自己的 `HintRanking` 排序、`HintSession` 起名、`HintOverlayLayout` 定位，最后由浮层用的同一个 `HintCanvasView` 画出来。少的只是那个窗口。
 - 字体是 CI 机器上的 SF Mono 和 SF Pro Rounded。
-- 每个方案一张浅色、一张深色：两个窗口的全部标签，浏览器按下 `Z` 之后的状态，三条 2 倍放大，一条 4 倍放大的标签样本。`current-*.png` 是 v0.1.5 的样式，同样的画法。
+- 每个方案一张浅色、一张深色（2560 × 2428 像素，2 倍）：两个窗口的全部标签，浏览器按下 `Z` 之后的状态，三条 2 倍放大，一条 4 倍放大的标签样本。
+- 提交在这里的文件和 artifact 里的逐像素相同，只用 `optipng -o2 -strip all` 无损重压了一遍，小了约四分之一。artifact 里另有 `current-light.png`、`current-dark.png`（v0.1.5 的样式，同样的画法）和 `metrics.txt`，没有提交。
 
 The PNGs in `docs/label-redesign/` come from the `label-previews` CI job on macOS (`scripts/render-label-previews.sh`). The backgrounds are two mock windows drawn with AppKit in `Tools/LabelPreviews`: a browser on an article page and a WeChat-like chat client. Every name, address and message in them is made up. The targets are recorded by the same code that draws them, then ranked by `HintRanking`, named by `HintSession`, placed by `HintOverlayLayout` and drawn by the overlay's own `HintCanvasView`, with the SF fonts of the CI machine. Only the panel window is missing.
+
+Each option has a light and a dark sheet (2560 × 2428 pixels, 2x): both windows with every label, the browser after `Z` is typed, three strips at twice the size and three labels at four times the size. The committed files are pixel for pixel the artifact's, recompressed losslessly with `optipng -o2 -strip all`, which makes them about a quarter smaller. The artifact also holds `current-light.png` and `current-dark.png` (the v0.1.5 style drawn the same way) and `metrics.txt`; those are not committed.
 
 - `docs/label-redesign/compare.png`
 - `docs/label-redesign/option-A-light.png`、`docs/label-redesign/option-A-dark.png`
 - `docs/label-redesign/option-B-light.png`、`docs/label-redesign/option-B-dark.png`
 - `docs/label-redesign/option-C-light.png`、`docs/label-redesign/option-C-dark.png`
 - `docs/label-redesign/option-D-light.png`、`docs/label-redesign/option-D-dark.png`
-- `docs/label-redesign/current-light.png`、`docs/label-redesign/current-dark.png`
 
 ## 没核对的事 / What was not checked
 
