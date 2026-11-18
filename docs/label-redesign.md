@@ -1,8 +1,21 @@
 # 提示标签改版：四个方案 / Hint label redesign: four options
 
-状态：第一阶段，只出方案。发布的默认样式没有改，仍是 v0.1.5 的灰底标签（`HintLabelStyle.shipped == .classic`）。四个候选样式已经在真正的视图代码里实现，用一个开关可以在真机上试，但不设开关时界面和 v0.1.5 一样。
+状态：**已选定方案 A（Amber tag），并且已经是应用里唯一的标签样式**，浅色和深色外观都是它（`HintLabelStyle.shipped == .amber`）。没有切换样式的设置。B、C、D 没有被选中；它们和 v0.1.5 的灰底标签的绘制代码还留着，只给预览工具用，这样本页的对比图可以随时在 CI 上重画。
 
-Status: phase 1, options only. The shipped default is unchanged: `HintLabelStyle.shipped` is still `.classic`, the gray v0.1.5 label. The four candidates are implemented in the real overlay views behind `HintLabelStyle` and can be tried on a Mac with one setting. Without that setting the overlay draws what v0.1.5 drew.
+Status: **option A (Amber tag) was chosen and is now the only label style in the app**, in light and in dark appearance (`HintLabelStyle.shipped == .amber`). There is no setting that selects a style. B, C and D were not chosen. Their drawing code, and that of the gray v0.1.5 label, is kept for the preview tool only, so the comparison on this page can be redrawn on CI at any time.
+
+选定之后改了什么：
+
+- 浮层面板、每块屏幕上的画布、`HintBadgeView` 都画 `HintLabelStyle.shipped`。
+- 第一阶段为了在真机上试用加的 `SupervimHintLabelStyle` 开关已经删掉。
+- 落点没有变：A 的标签外框和 v0.1.5 一样，左上角对着目标的左上角（`HintGeometry.labelRect`），辅助功能扫出来的目标和微信里文字识别出来的目标走的是同一条路。
+- 面板的复用没有变：每块屏幕一个面板、一个画布，建一次，之后每次按键只换标签列表重画。
+
+What changed once A was chosen: the overlay panel, the canvas on each screen and `HintBadgeView` draw `HintLabelStyle.shipped`; the `SupervimHintLabelStyle` default that phase 1 added for trying a style on a Mac is removed; placement is unchanged, since A's frame has its top-left corner on the target's top-left corner as in v0.1.5 (`HintGeometry.labelRect`), for accessibility targets and for the text-recognition targets used in WeChat alike; and the panels are still reused, one panel and one canvas per screen, made once and given a new list of labels on each key.
+
+下面是当时四个方案的说明，保留作记录。
+
+The rest of this page is the description of the four options as they were proposed, kept as a record.
 
 ## 要解决的问题 / The problem
 
@@ -32,7 +45,7 @@ All four candidates:
 
 ![五种样式并排 / all five styles side by side](label-redesign/compare.png)
 
-| | 当前 Current | A · Amber tag | B · Ink pill | C · Cursor block | D · Glass |
+| | 之前 Before (v0.1.5) | A · Amber tag（已选 shipped） | B · Ink pill | C · Cursor block | D · Glass |
 |---|---|---|---|---|---|
 | 字体 Font | SF Mono Semibold | SF Pro Rounded Bold | SF Mono Bold | SF Mono Heavy | SF Pro Rounded Heavy |
 | 字号 Size | 12pt | 15pt | 14pt | 15pt | 16pt |
@@ -144,23 +157,11 @@ A translucent capsule that follows the system appearance, with the largest and h
 
 Strength: it looks the most like something macOS ships, it is the quietest, and it has the largest letters. Weakness: a white label on a white page is carried by its edge and shadow only, so it is harder to spot than a colored one, and it is the largest label. "Glass" here is an 88% translucent fill without backdrop blur: all labels are drawn on one transparent canvas, and real blur would need one `NSVisualEffectView` per label, which is too heavy for a few hundred labels. With Reduce Transparency or Increase Contrast the fill is opaque.
 
-## 我的建议 / Recommendation
+## 结论 / Decision
 
-如果反馈的核心是「找标签累」，选 **A**。找标签靠的是颜色先于形状、形状先于读字；饱和的黄是唯一一个在浅色窗口、深色窗口、微信的绿和照片上都不会和内容混在一起的颜色，而且标签始终压在自己的目标上，不需要判断它属于上面还是下面。想要更安静、更像系统的外观，选 **D**。B 在深色模式下不够显眼，C 在绿色内容上不够显眼（微信正好是绿的），我不建议它们做默认，但可以留作可选样式。
+选了 **A**。当时的建议也是 A：找标签靠的是颜色先于形状、形状先于读字；饱和的黄是唯一一个在浅色窗口、深色窗口、微信的绿和照片上都不会和内容混在一起的颜色，而且标签始终压在自己的目标上，不需要判断它属于上面还是下面。D 是更安静的备选；B 在深色模式下不够显眼，C 在绿色内容上不够显眼。
 
-If the complaint is that finding labels is tiring, pick **A**. A label is found by color before shape and by shape before reading; saturated yellow is the one color here that does not blend with a light window, a dark window, WeChat's green or a photo, and the label is always on its own target, so there is nothing to decide about above or below. For a quieter, more native look pick **D**. B is weak in dark mode and C is weak on green content, which WeChat is; I would not make either the default, though they can stay as choices.
-
-## 在真机上试 / Trying one on a Mac
-
-候选样式不是默认，但可以打开：
-
-```sh
-defaults write com.lijigang.supervim SupervimHintLabelStyle amber   # 或 ink、cursor、glass，或 A–D
-# 退出并重新打开 Supervim
-defaults delete com.lijigang.supervim SupervimHintLabelStyle        # 回到默认
-```
-
-The setting is read once when the overlay is first made, so quit and reopen Supervim after changing it. Any other value, or no value, is the shipped style.
+**A** was chosen, which was also the recommendation. A label is found by color before shape and by shape before reading; saturated yellow is the one color here that does not blend with a light window, a dark window, WeChat's green or a photo, and the label is always on its own target, so there is nothing to decide about above or below. D was the quieter alternative. B is weak in dark mode and C is weak on green content.
 
 ## 预览图怎么来的 / How the previews are made
 
@@ -170,11 +171,11 @@ The setting is read once when the overlay is first made, so quit and reopen Supe
 - 可点的目标和画出来的东西是同一遍代码记下来的，再交给应用自己的 `HintRanking` 排序、`HintSession` 起名、`HintOverlayLayout` 定位，最后由浮层用的同一个 `HintCanvasView` 画出来。少的只是那个窗口。
 - 字体是 CI 机器上的 SF Mono 和 SF Pro Rounded。
 - 每个方案一张浅色、一张深色（2560 × 2428 像素，2 倍）：两个窗口的全部标签，浏览器按下 `Z` 之后的状态，三条 2 倍放大，一条 4 倍放大的标签样本。
-- 提交在这里的文件和 artifact 里的逐像素相同，只用 `optipng -o2 -strip all` 无损重压了一遍，小了约四分之一。artifact 里另有 `current-light.png`、`current-dark.png`（v0.1.5 的样式，同样的画法）和 `metrics.txt`，没有提交。
+- 提交在这里的文件和 artifact 里的逐像素相同，只用 `optipng -o2 -strip all` 无损重压了一遍，小了约四分之一。artifact 里另有 `before-light.png`、`before-dark.png`（v0.1.5 的样式，同样的画法）和 `metrics.txt`，没有提交。
 
 The PNGs in `docs/label-redesign/` come from the `label-previews` CI job on macOS (`scripts/render-label-previews.sh`). The backgrounds are two mock windows drawn with AppKit in `Tools/LabelPreviews`: a browser on an article page and a WeChat-like chat client. Every name, address and message in them is made up. The targets are recorded by the same code that draws them, then ranked by `HintRanking`, named by `HintSession`, placed by `HintOverlayLayout` and drawn by the overlay's own `HintCanvasView`, with the SF fonts of the CI machine. Only the panel window is missing.
 
-Each option has a light and a dark sheet (2560 × 2428 pixels, 2x): both windows with every label, the browser after `Z` is typed, three strips at twice the size and three labels at four times the size. The committed files are pixel for pixel the artifact's, recompressed losslessly with `optipng -o2 -strip all`, which makes them about a quarter smaller. The artifact also holds `current-light.png` and `current-dark.png` (the v0.1.5 style drawn the same way) and `metrics.txt`; those are not committed.
+Each option has a light and a dark sheet (2560 × 2428 pixels, 2x): both windows with every label, the browser after `Z` is typed, three strips at twice the size and three labels at four times the size. The committed files are pixel for pixel the artifact's, recompressed losslessly with `optipng -o2 -strip all`, which makes them about a quarter smaller. The artifact also holds `before-light.png` and `before-dark.png` (the v0.1.5 style drawn the same way) and `metrics.txt`; those are not committed.
 
 - `docs/label-redesign/compare.png`
 - `docs/label-redesign/option-A-light.png`、`docs/label-redesign/option-A-dark.png`
@@ -184,8 +185,10 @@ Each option has a light and a dark sheet (2560 × 2428 pixels, 2x): both windows
 
 ## 没核对的事 / What was not checked
 
-- 没有在物理 Mac 上看过这四个样式。颜色、字重、阴影以 CI 的离屏 PNG 为准；真实屏幕上的观感（尤其是黄和绿的饱和度、阴影的轻重）要在真机上用上面的开关确认。
-- 假窗口不是真应用。真实的无障碍树里目标的大小和层级更乱，「下面有没有别的目标」这条规则在真应用里的效果只有 `HintLabelStyleTests` 里的几何测试和这两张假窗口作证。
-- 第一阶段没有改默认样式，也没有改 `HintGeometry.labelRect` 和 v0.1.5 的绘制代码；`classic` 的落点由测试钉住，和原来的流程逐项相等。
+- 这次没有在物理 Mac 上看过新标签。颜色、字重、阴影以 CI 的离屏 PNG 为准；真实屏幕上黄色的饱和度、阴影的轻重、在微信里的样子，要在真机上确认。
+- 假窗口不是真应用。真实的无障碍树里目标的大小和层级更乱。A 的落点和 v0.1.5 相同，所以这方面的风险和以前一样；B、D 用的「下面有没有别的目标」规则只有 `HintLabelStyleTests` 里的几何测试和这两张假窗口作证，它们现在不在应用里。
+- 自动测试覆盖的是：发布的样式是 A、浅深同一个黄、没有样式开关（`HintLabelStyleTests`，Linux 和 macOS 都跑）；真的 `HintBadgeView` 和 `HintCanvasView` 画到位图里，读像素确认底是黄的、已输入的字母变淡而剩下的字母不变、同一个画布换标签后重画（`HintLabelRenderingTests`，只在 macOS 上跑）；文字识别出来的目标，标签仍在它的左上角。
 
-None of the four was seen on a physical Mac. Colors, weights and shadows are judged from offscreen PNGs; how saturated the yellow and the green feel on a real display, and how heavy the shadows are, should be confirmed with the setting above. The mock windows are not real apps: a real accessibility tree is messier, and the "is another target under it" rule is backed only by the geometry tests in `HintLabelStyleTests` and these two mock windows. Phase 1 does not change the default, `HintGeometry.labelRect`, or the v0.1.5 drawing code; a test pins the `classic` arrangement to the old pipeline item for item.
+The new label was not seen on a physical Mac in this change. Colors, weights and shadows are judged from offscreen PNGs; how saturated the yellow feels on a real display, how heavy the shadow is, and how it looks in WeChat should be confirmed on a Mac. The mock windows are not real apps, and a real accessibility tree is messier. A is placed as the v0.1.5 label was, so that risk is what it was before; the "is another target under it" rule of B and D is backed only by geometry tests and these two mock windows, and those styles are not in the app.
+
+Automated tests cover: the shipped style is A, one yellow in light and dark, and no style setting (`HintLabelStyleTests`, on Linux and macOS); the real `HintBadgeView` and `HintCanvasView` drawn into a bitmap, with pixels read back to check that the fill is yellow, that a typed letter fades while the letter still to type does not change, and that one canvas redraws a new list of labels (`HintLabelRenderingTests`, macOS only); and that a text-recognition target keeps its label on its top-left corner.

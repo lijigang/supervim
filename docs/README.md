@@ -20,7 +20,7 @@
 | [开发说明](development.md) | 构建、打包、发布、CI、脚本和工程结构 |
 | [稳定签名](stable-signing.md) | 为什么升级后权限能保留，证书怎么生成和配置 |
 | [界面打磨](ui-polish.md) | 视觉语言，以及 `ui-polish/` 里的预览图怎么来的 |
-| [提示标签改版方案](label-redesign.md) | 四个候选标签样式的字体、字号、颜色和形状，`label-redesign/` 里的预览图。默认样式还没有改 |
+| [提示标签改版](label-redesign.md) | 四个方案的字体、字号、颜色和形状，`label-redesign/` 里的预览图。已选定并发布方案 A |
 
 ## 过程记录
 
