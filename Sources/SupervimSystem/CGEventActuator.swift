@@ -36,6 +36,13 @@ public final class AXElementStore: AccessibilityManipulating, @unchecked Sendabl
         lock.unlock()
     }
 
+    /// Swaps every binding at once, so a press never sees a half-filled table.
+    public func replace(with bound: [String: AXUIElement]) {
+        lock.lock()
+        elements = bound
+        lock.unlock()
+    }
+
     public func press(elementID: String) -> Bool {
         guard let element = element(for: elementID) else {
             return false
@@ -43,7 +50,17 @@ public final class AXElementStore: AccessibilityManipulating, @unchecked Sendabl
         guard CFGetTypeID(element) == AXUIElementGetTypeID() else {
             return false
         }
-        return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+        let watch = TraceStopwatch()
+        let error = AXUIElementPerformAction(element, kAXPressAction as CFString)
+        if error == .success {
+            return true
+        }
+        // A press that opens a sheet or a menu returns only when that closes,
+        // and the call gives up after the messaging timeout. The press was
+        // delivered. Reporting a failure would add a click on top of it.
+        let waited = watch.milliseconds
+        return error == .cannotComplete
+            && waited >= Double(AXSystemReader.messagingTimeoutSeconds) * 1_000 * 0.8
     }
 
     public func nudgeScrollBar(
