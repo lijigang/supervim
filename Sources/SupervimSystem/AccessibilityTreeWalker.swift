@@ -287,10 +287,11 @@ public enum AccessibilityTreeWalker {
     ) -> [LevelRead<Source.Node>] {
         let box = LevelBox<Source.Node>(count: frontier.count)
         let lanes = frontier.count < 8 ? 1 : min(workers, frontier.count)
-        let work: @Sendable (Int) -> Void = { lane in
-            var index = lane
-            while index < frontier.count {
-                if box.stopped || expired() {
+        // Each worker takes the next node nobody has taken. A node that is
+        // slow to answer holds up one worker, not a fixed share of the level.
+        let work: @Sendable (Int) -> Void = { _ in
+            while let index = box.claim() {
+                if expired() {
                     return
                 }
                 let result = source.read(frontier[index].node)
@@ -298,7 +299,6 @@ public enum AccessibilityTreeWalker {
                     box.stop()
                 }
                 box.store(.read(result), at: index)
-                index += lanes
             }
         }
         if lanes == 1 {
@@ -313,15 +313,22 @@ public enum AccessibilityTreeWalker {
         private let lock = NSLock()
         private var values: [LevelRead<Node>]
         private var halted = false
+        private var next = 0
 
         init(count: Int) {
             values = [LevelRead<Node>](repeating: .skipped, count: count)
         }
 
-        var stopped: Bool {
+        /// The next node to read, or nil when the level is done or the app
+        /// stopped answering.
+        func claim() -> Int? {
             lock.lock()
             defer { lock.unlock() }
-            return halted
+            guard !halted, next < values.count else {
+                return nil
+            }
+            next += 1
+            return next - 1
         }
 
         func stop() {

@@ -161,19 +161,37 @@ final class AccessibilityTreeWalkerTests: XCTestCase {
     }
 
     func testDeadlineReturnsTheLevelsReadSoFar() {
+        // One read in the second level outlasts the budget. The other reads
+        // take no time, so the result does not depend on how fast the
+        // machine sleeps: the second level is complete, the third is not
+        // started.
         let tree = wideTree(branches: 20, leaves: 40)
-        let source = FakeSource(delayMilliseconds: 1)
-        var limited = options()
-        limited.budgetMilliseconds = 150
+        let source = FakeSource()
+        source.slowRead = (index: 5, milliseconds: 400)
+        var limited = options(workers: 4)
+        limited.budgetMilliseconds = 200
         let walked = AccessibilityTreeWalker.walk(root: tree, source: source, options: limited)
 
         XCTAssertTrue(walked.timedOut)
         XCTAssertTrue(walked.truncated)
-        XCTAssertLessThan(source.reads, 821)
-        XCTAssertGreaterThan(source.reads, 1)
+        XCTAssertEqual(source.reads, 21)
         XCTAssertEqual(walked.root?.role, "AXWindow")
         XCTAssertEqual(walked.root?.children.count, 20)
-        XCTAssertLessThan(walked.milliseconds, 1_000)
+        XCTAssertEqual(walked.root?.children.first?.children.count, 0)
+        XCTAssertGreaterThanOrEqual(walked.milliseconds, 200)
+    }
+
+    func testDeadlineInsideALevelKeepsTheNodesAlreadyRead() {
+        let tree = wideTree(branches: 20, leaves: 2)
+        let source = FakeSource()
+        source.slowRead = (index: 3, milliseconds: 300)
+        var limited = options(workers: 1)
+        limited.budgetMilliseconds = 150
+        let walked = AccessibilityTreeWalker.walk(root: tree, source: source, options: limited)
+
+        XCTAssertTrue(walked.timedOut)
+        XCTAssertEqual(source.reads, 4)
+        XCTAssertEqual(walked.root?.children.count, 3)
     }
 
     func testUnresponsiveAppStopsTheWalk() {
@@ -214,20 +232,24 @@ final class AccessibilityTreeWalkerTests: XCTestCase {
         XCTAssertFalse(walked.truncated)
     }
 
-    func testFourWorkersCopyTheSameTreeInLessTime() {
-        let tree = wideTree(branches: 16, leaves: 24)
-        let slow = FakeSource(delayMilliseconds: 1)
+    func testFourWorkersReadAtTheSameTimeAndCopyTheSameTree() {
+        let tree = wideTree(branches: 8, leaves: 12)
+        let slow = FakeSource(delayMilliseconds: 2)
         let one = AccessibilityTreeWalker.walk(root: tree, source: slow, options: options(workers: 1))
-        let parallel = FakeSource(delayMilliseconds: 1)
+        let parallel = FakeSource(delayMilliseconds: 2)
         let four = AccessibilityTreeWalker.walk(root: tree, source: parallel, options: options(workers: 4))
 
         XCTAssertEqual(one.root, four.root)
         XCTAssertEqual(one.bound.map(\.path), four.bound.map(\.path))
         XCTAssertEqual(slow.reads, parallel.reads)
-        XCTAssertLessThan(four.milliseconds, one.milliseconds * 0.7)
+        // Counted, not timed: a loaded machine sleeps longer than asked, and
+        // a ratio of two such runs is noise.
+        XCTAssertEqual(slow.mostReadsAtOnce, 1)
+        XCTAssertGreaterThan(parallel.mostReadsAtOnce, 1)
+        XCTAssertLessThanOrEqual(parallel.mostReadsAtOnce, 4)
         print(
-            "BENCH walker nodes=\(slow.reads) latency_ms=1 workers1_ms=\(String(format: "%.0f", one.milliseconds)) "
-                + "workers4_ms=\(String(format: "%.0f", four.milliseconds))"
+            "BENCH walker nodes=\(slow.reads) latency_ms=2 workers1_ms=\(String(format: "%.0f", one.milliseconds)) "
+                + "workers4_ms=\(String(format: "%.0f", four.milliseconds)) at_once=\(parallel.mostReadsAtOnce)"
         )
     }
 
@@ -306,7 +328,17 @@ private final class FakeSource: AccessibilityNodeSource, @unchecked Sendable {
     private let delayMilliseconds: Double
     private var count = 0
     private var identifiers: [Int] = []
+    private var inFlight = 0
+    private var peak = 0
     var unresponsiveAfter: Int?
+    /// The read with this index (counted from zero) sleeps this long.
+    var slowRead: (index: Int, milliseconds: Double)?
+
+    var mostReadsAtOnce: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return peak
+    }
 
     init(delayMilliseconds: Double = 0) {
         self.delayMilliseconds = delayMilliseconds
@@ -334,10 +366,16 @@ private final class FakeSource: AccessibilityNodeSource, @unchecked Sendable {
         }
         count += 1
         identifiers.append(node.identifier)
+        inFlight += 1
+        peak = max(peak, inFlight)
+        let pause = slowRead.flatMap { $0.index == seen ? $0.milliseconds : nil } ?? delayMilliseconds
         lock.unlock()
-        if delayMilliseconds > 0 {
-            Thread.sleep(forTimeInterval: delayMilliseconds / 1_000)
+        if pause > 0 {
+            Thread.sleep(forTimeInterval: pause / 1_000)
         }
+        lock.lock()
+        inFlight -= 1
+        lock.unlock()
         if node.role == "AXGone" {
             return .gone
         }
