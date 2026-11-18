@@ -189,7 +189,19 @@ final class SupervimRuntimeTests: XCTestCase {
         XCTAssertTrue(text.contains("CGPreflightListenEventAccess()"))
         XCTAssertTrue(text.contains("scanner.start()"))
         XCTAssertTrue(text.contains("HintController"))
-        XCTAssertTrue(text.contains("refreshClickables()"))
+        // The window is walked on a queue of its own. The old assembly walked
+        // it on the main run loop, which the key hook shared.
+        XCTAssertTrue(text.contains("ContextRefresher("))
+        XCTAssertTrue(text.contains("focusMayHaveChanged()"))
+        XCTAssertTrue(text.contains("QueueWork(label: \"supervim.scan\""))
+        XCTAssertTrue(text.contains("QueueWork(label: \"supervim.actuate\""))
+        XCTAssertTrue(text.contains("scanning: scanWork"))
+        XCTAssertTrue(text.contains("deferral: actWork"))
+        XCTAssertTrue(text.contains("followUp: refresher"))
+        XCTAssertTrue(text.contains("ModeChangeObserver("))
+        for token in ["refreshClickables()", "readFrontmostWindow(", "firstEditableInput()", "DispatchQueue.main"] {
+            XCTAssertFalse(text.contains(token), token)
+        }
         XCTAssertTrue(text.contains("NonActivatingHintPanel"))
         XCTAssertTrue(text.contains("AXElementStore()"))
         XCTAssertTrue(text.contains("edgeBars: scrollElements"))

@@ -220,6 +220,22 @@ final class ContextRefreshTests: XCTestCase {
         XCTAssertEqual(rig.modeChanges.values.count, 2)
     }
 
+    /// The settings window names the front app. Switching apps without a
+    /// mode change still has to reach the menu.
+    func testAnotherFrontAppIsReportedEvenWhenTheModeIsTheSame() {
+        let rig = RefreshRig()
+        rig.refresher.focusMayHaveChanged()
+        rig.work.runPending()
+        XCTAssertEqual(rig.modeChanges.values.count, 1)
+        rig.scanner.bundle = "com.example.Other"
+        rig.refresher.focusMayHaveChanged()
+        rig.work.runPending()
+        XCTAssertEqual(rig.modeChanges.values.count, 2)
+        rig.refresher.focusMayHaveChanged()
+        rig.work.runPending()
+        XCTAssertEqual(rig.modeChanges.values.count, 2)
+    }
+
     func testFocusReadTimingIsLogged() {
         let rig = RefreshRig()
         let lines = ModeTrace.capture {
@@ -441,6 +457,7 @@ private final class ScriptedScanner: ContextScanning, @unchecked Sendable {
     }
 
     var cache: LockedFocusCache?
+    var bundle = "com.example.App"
     var focusResults: [FocusResult] = []
     private(set) var focusReads = 0
     private(set) var scans = 0
@@ -451,17 +468,17 @@ private final class ScriptedScanner: ContextScanning, @unchecked Sendable {
         focusReads += 1
         switch result {
         case .failed:
-            cache?.replace(CachedFocus(editability: .unknown, bundleIdentifier: "com.example.App"))
+            cache?.replace(CachedFocus(editability: .unknown, bundleIdentifier: bundle))
         case .unknownRole:
             cache?.replace(CachedFocus(
                 editability: .unknown,
-                bundleIdentifier: "com.example.App",
+                bundleIdentifier: bundle,
                 role: "AXUnknown"
             ))
         case .known:
             cache?.replace(CachedFocus(
                 editability: .notEditable,
-                bundleIdentifier: "com.example.App",
+                bundleIdentifier: bundle,
                 role: "AXGroup"
             ))
         }

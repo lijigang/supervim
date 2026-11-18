@@ -58,6 +58,7 @@ public final class ContextRefresher: TapFollowUp, @unchecked Sendable {
     private var scanEpoch = 0
     private var lastUnknownKeyRead = -Double.infinity
     private var lastMode: SupervimMode?
+    private var lastBundle: String?
 
     public init(
         scanner: any ContextScanning,
@@ -172,11 +173,15 @@ public final class ContextRefresher: TapFollowUp, @unchecked Sendable {
         }
     }
 
+    /// The menu shows the mode, and the settings window names the front
+    /// app. Either one changing is worth telling the menu about.
     private func noteMode() {
         let now = mode()
+        let bundle = focus.currentFocus().bundleIdentifier
         lock.lock()
-        let changed = lastMode != now
+        let changed = lastMode != now || lastBundle != bundle
         lastMode = now
+        lastBundle = bundle
         lock.unlock()
         if changed {
             modeChanged()

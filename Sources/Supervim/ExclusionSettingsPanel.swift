@@ -101,6 +101,7 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     private let runtime: SupervimRuntime
     private let launchGate: PermissionLaunchGate
     private let loginItems: LoginItemRegistration
+    private var lastDrawnMenu: DrawnMenu?
 
     override init() {
         let session = MenuBarApplication.makeSession(frontmost: WorkspaceFrontmost())
@@ -120,6 +121,7 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
         super.init()
         observer.onEvent = { [weak self] in
             Task { @MainActor in
+                observer.delivered()
                 self?.refreshAfterHook()
             }
         }
@@ -180,9 +182,15 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     }
 
     private func installMenu(guidance: PermissionGuidance) {
-        let menu = NSMenu()
         let snapshot = session.snapshot()
         let title = misses.title(fallback: snapshot.statusTitle)
+        let permissionsTitle = guidance.isVisible ? guidance.menuTitle : nil
+        let drawn = DrawnMenu(snapshot: snapshot, title: title, permissionsTitle: permissionsTitle)
+        if drawn == lastDrawnMenu, statusItem?.menu != nil {
+            return
+        }
+        lastDrawnMenu = drawn
+        let menu = NSMenu()
         let button = statusItem?.button
         let glyph = MenuBarGlyphImage.image(for: MenuBarGlyphKind(statusTitle: snapshot.statusTitle))
         button?.image = glyph
@@ -199,7 +207,6 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
         } else {
             TransientNoticePanel.shared.hide()
         }
-        let permissionsTitle = guidance.isVisible ? guidance.menuTitle : nil
         for item in MenuChrome.items(snapshot: snapshot, permissionsTitle: permissionsTitle) {
             if item.isSeparator {
                 menu.addItem(.separator())
@@ -361,12 +368,38 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     }
 }
 
+/// What the status item and its menu were last built from. The menu is
+/// rebuilt only when one of these changes.
+private struct DrawnMenu: Equatable {
+    var snapshot: MenuBarSnapshot
+    var title: String
+    var permissionsTitle: String?
+}
+
+/// Passes hook events to the main thread. Events that arrive while one is
+/// already waiting there are folded into it: the menu shows the current
+/// state, not a history.
 final class HookMenuObserver: RuntimeObserving, @unchecked Sendable {
     var onEvent: (@Sendable () -> Void)?
+    private let lock = NSLock()
+    private var waiting = false
 
     func runtimeDidHandle(_ decision: EventDecision?) {
         _ = decision
-        onEvent?()
+        lock.lock()
+        let already = waiting
+        waiting = true
+        lock.unlock()
+        if !already {
+            onEvent?()
+        }
+    }
+
+    /// The main thread has picked the event up. The next one is queued again.
+    func delivered() {
+        lock.lock()
+        waiting = false
+        lock.unlock()
     }
 }
 
