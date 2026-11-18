@@ -1,9 +1,11 @@
 import Foundation
 
-/// How a hint label looks. `classic` is the v0.1.5 gray pill and is what
-/// ships. The other four are the redesign candidates A to D. They are drawn
-/// by the same canvas and are reached only through `defaultsKey` or the
-/// preview tool.
+/// How a hint label looks. `amber` is what ships: option A of the redesign,
+/// in light and in dark appearance. `classic` is the v0.1.5 gray pill it
+/// replaced. `ink`, `cursor` and `glass` are options B to D, which were not
+/// chosen. The overlay draws `shipped` only; the others are drawn by the
+/// preview tool, which keeps the comparison in `docs/label-redesign`
+/// reproducible. There is no setting that selects a style.
 public enum HintLabelStyle: String, CaseIterable, Equatable, Sendable {
     case classic
     case amber
@@ -11,14 +13,9 @@ public enum HintLabelStyle: String, CaseIterable, Equatable, Sendable {
     case cursor
     case glass
 
-    public static let shipped: HintLabelStyle = .classic
+    public static let shipped: HintLabelStyle = .amber
+    /// Options A to D of the redesign, in that order.
     public static let candidates: [HintLabelStyle] = [.amber, .ink, .cursor, .glass]
-
-    /// `defaults write com.lijigang.supervim SupervimHintLabelStyle amber`
-    /// and a relaunch draw the labels in a candidate style. Removing the key
-    /// returns to `shipped`.
-    public static let defaultsKey = "SupervimHintLabelStyle"
-    public static let applicationSuiteName = "com.lijigang.supervim"
 
     public var optionLetter: String? {
         switch self {
@@ -48,34 +45,6 @@ public enum HintLabelStyle: String, CaseIterable, Equatable, Sendable {
         case .glass:
             return "Glass"
         }
-    }
-
-    /// A style name or an option letter, in any case. Anything else, and no
-    /// value at all, is the shipped style.
-    public static func resolve(_ preference: String?) -> HintLabelStyle {
-        guard let raw = preference?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-              !raw.isEmpty
-        else {
-            return shipped
-        }
-        for style in allCases {
-            if style.rawValue == raw || style.optionLetter?.lowercased() == raw {
-                return style
-            }
-        }
-        return shipped
-    }
-
-    /// The style the user asked for in the app's defaults, or `shipped`.
-    public static func preferred(
-        in stores: [UserDefaults?] = [.standard, UserDefaults(suiteName: applicationSuiteName)]
-    ) -> HintLabelStyle {
-        for store in stores {
-            if let value = store?.string(forKey: defaultsKey) {
-                return resolve(value)
-            }
-        }
-        return shipped
     }
 }
 

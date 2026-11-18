@@ -59,10 +59,11 @@ func chromeDraw(
     attributed.draw(in: rect)
 }
 
-/// Draws hint labels in the shipped style, `HintLabelStyle.classic`. One
-/// painter is made per drawing pass: it resolves the colors, the font and
-/// the accessibility settings once, and then draws any number of labels
-/// with them. `HintLabelRenderer` picks between this and the candidates.
+/// Draws hint labels in the v0.1.5 style, `HintLabelStyle.classic`, which
+/// no longer ships and is kept for the comparison sheets. One painter is
+/// made per drawing pass: it resolves the colors, the font and the
+/// accessibility settings once, and then draws any number of labels with
+/// them. `HintLabelRenderer` picks between this and `StyledHintPainter`.
 ///
 /// A label is a near-opaque gray pill with a hairline edge and a soft
 /// shadow, the green cursor block on the left, and SF Mono Semibold 12.

@@ -122,8 +122,7 @@ private final class PanelHolder {
     private var hintPanels: [NSPanel] = []
     private var canvases: [HintCanvasView] = []
     private var sizes: [String: NSSize] = [:]
-    /// Read once. `classic` unless the user set `HintLabelStyle.defaultsKey`.
-    private let style: HintLabelStyle
+    private let style = HintLabelStyle.shipped
     /// Targets of the hint pass on screen, kept from the keystroke that
     /// showed all of them. Placement reads them while a prefix is typed, so
     /// the labels that remain do not move.
@@ -131,7 +130,6 @@ private final class PanelHolder {
 
     init() {
         panel = Self.makePanel()
-        style = HintLabelStyle.preferred()
     }
 
     func hideAll() {

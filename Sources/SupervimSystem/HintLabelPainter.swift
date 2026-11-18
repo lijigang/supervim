@@ -3,9 +3,9 @@ import AppKit
 import CoreText
 import SupervimCore
 
-/// Draws a hint label in whichever style was asked for. `classic` goes to
-/// `HintBadgePainter`, untouched; the redesign candidates go to
-/// `StyledHintPainter`. One renderer is made per drawing pass.
+/// Draws a hint label in whichever style was asked for. The shipped style
+/// and the other redesign options go to `StyledHintPainter`; `classic`
+/// goes to `HintBadgePainter`. One renderer is made per drawing pass.
 @MainActor
 struct HintLabelRenderer {
     private let classic: HintBadgePainter?
@@ -207,7 +207,7 @@ enum HintLabelOutline {
     }
 }
 
-/// Draws the redesign candidates A to D from `HintLabelSpec` and
+/// Draws the shipped label and the other redesign options from `HintLabelSpec` and
 /// `HintLabelPalette`. The letters are capitals, set on their cap height in
 /// the middle of the body. The whole label is one line of text in one font:
 /// typing changes colors only, so a label keeps its width and its letters

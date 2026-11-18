@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Renders the hint label redesign candidates over mock windows, light and dark.
-# macOS only: the labels are drawn by the app's own AppKit views with the
-# system fonts. Writes option-{A,B,C,D}-{light,dark}.png, current-*.png,
+# Renders the four hint label redesign options over mock windows, light and
+# dark. Option A is the one that ships. macOS only: the labels are drawn by
+# the app's own AppKit views with the system fonts. Writes
+# option-{A,B,C,D}-{light,dark}.png, before-*.png (the v0.1.5 label),
 # compare.png and metrics.txt. The committed copies are in docs/label-redesign.
 set -euo pipefail
 
@@ -14,7 +15,7 @@ python3 - "$OUT" <<'PY'
 import pathlib, sys
 root = pathlib.Path(sys.argv[1])
 expected = [f"option-{letter}-{mode}.png" for letter in "ABCD" for mode in ("light", "dark")]
-expected += ["current-light.png", "current-dark.png", "compare.png"]
+expected += ["before-light.png", "before-dark.png", "compare.png"]
 for name in expected:
     path = root / name
     if not path.is_file():

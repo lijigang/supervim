@@ -245,14 +245,15 @@ enum LabelSheets {
     static let compareTyped = NSRect(x: 430, y: 164, width: 270, height: 172)
 
     static func fileStem(_ style: HintLabelStyle) -> String {
-        style.optionLetter.map { "option-\($0)" } ?? "current"
+        style.optionLetter.map { "option-\($0)" } ?? "before"
     }
 
     static func heading(_ style: HintLabelStyle) -> String {
         if let letter = style.optionLetter {
-            return "Option \(letter) · \(style.title)"
+            let chosen = style == HintLabelStyle.shipped ? " · shipped" : ""
+            return "Option \(letter) · \(style.title)\(chosen)"
         }
-        return "Current · v0.1.5"
+        return "Before · v0.1.5"
     }
 
     static func summary(_ style: HintLabelStyle) -> String {
@@ -463,7 +464,7 @@ enum LabelSheets {
         return try Raster.render(page, dark: dark, scale: sheetScale * zoom)
     }
 
-    /// Every style side by side: the current one first, then A to D.
+    /// Every style side by side: the v0.1.5 one first, then A to D.
     static func compareSheet(
         shots: [HintLabelStyle: [Bool: StyleShots]],
         labels: PreviewLabels
