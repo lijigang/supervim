@@ -34,6 +34,7 @@ Sources/SupervimCore           纯逻辑，不导入 AppKit 或事件框架：�
 Sources/SupervimSystem         系统适配：事件钩子、辅助功能扫描、点击和滚动、标签和帮助浮层、文字识别、登录项
 Sources/Supervim               菜单栏应用入口，设置窗口和权限窗口
 Tools/UISnapshots              把界面渲染成 PNG 的可执行目标
+Tools/LabelPreviews            把提示标签改版的四个方案画在假窗口上的可执行目标
 Tests/SupervimCoreTests        纯逻辑的 XCTest
 Tests/SupervimSystemTests      系统适配的 XCTest，系统接口用替身
 App/Supervim/Info.plist        应用包清单
@@ -54,6 +55,7 @@ docs/                          见 docs/README.md
 | `scripts/make-signing-cert.sh` | 生成稳定签名用的证书，只需做一次。见 [稳定签名](stable-signing.md) |
 | `scripts/make-icon.sh` | 从 `scripts/render_icon.py` 生成 `Resources/` 里的图标。`--check` 检查提交的图标和脚本一致。`--artifacts docs/icon` 重画 [图标预览](icon)；其中 Finder 和 Dock 示意图需要本机有 Chrome |
 | `scripts/render-ui-snapshots.sh [目录]` | 只在 macOS 上运行，把各个界面渲染成 2 倍 PNG。见 [界面打磨](ui-polish.md) |
+| `scripts/render-label-previews.sh [目录]` | 只在 macOS 上运行，把提示标签改版的四个方案渲染成 2 倍 PNG。见 [提示标签改版](label-redesign.md) |
 | `scripts/*-coverage.sh` | 14 个覆盖率脚本，每个要求对应源文件的行覆盖率不低于 90% |
 
 ## 打包 DMG
@@ -88,6 +90,8 @@ scripts/verify-dmg.sh build/Supervim-0.1.0.dmg
 4. `scripts/make-icon.sh --check`。
 5. `scripts/assemble-app.sh`，并检查 `Info.plist` 里的 `LSUIElement`、bundle id、版本号、`CFBundleIconFile` 和应用包里的 `AppIcon.icns`。
 6. 打包 DMG，挂载校验，作为 `Supervim-dmg` artifact 上传。
+
+另有一个并行的 `label-previews` 任务运行 `scripts/render-label-previews.sh`，结果作为 `label-previews` artifact 上传。
 
 只在 macOS 上编译的 AppKit 和系统胶水代码不计入覆盖率门槛。
 

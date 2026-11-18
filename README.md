@@ -145,6 +145,7 @@ Sources/SupervimSystem    系统适配：事件钩子、辅助功能扫描、点
 Sources/Supervim          菜单栏应用入口，设置窗口和权限窗口
 Tests/                    XCTest
 Tools/UISnapshots         把界面渲染成 docs/ui-polish/ 里的 PNG
+Tools/LabelPreviews       把提示标签改版的四个方案渲染成 docs/label-redesign/ 里的 PNG
 scripts/                  组装 .app、打包和签名 DMG、覆盖率、图标
 App/Supervim/Info.plist   应用包清单
 Resources/                应用图标
