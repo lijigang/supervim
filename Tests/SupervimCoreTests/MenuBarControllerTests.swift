@@ -264,6 +264,11 @@ final class MenuBarControllerTests: XCTestCase {
         XCTAssertEqual(editor.addButtonTitle, "Add Frontmost App")
         XCTAssertEqual(editor.notice, "Switch to the app you want to exclude, then come back here.")
 
+        let refused = try fixture.session.addFrontmost()
+        XCTAssertEqual(refused.bundleIdentifiers, Settings.defaultExcludedBundleIdentifiers)
+        XCTAssertEqual(refused.notice, "Switch to the app you want to exclude, then come back here.")
+        XCTAssertNil(try fixture.store.read())
+
         fixture.frontmost.bundleIdentifier = "com.example.Notes"
         let known = fixture.session.editor()
         XCTAssertTrue(known.canAddFrontmost)

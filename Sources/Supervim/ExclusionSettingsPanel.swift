@@ -101,10 +101,16 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     private let runtime: SupervimRuntime
     private let launchGate: PermissionLaunchGate
     private let loginItems: LoginItemRegistration
+    private var activations: WorkspaceActivationFeed?
     private var lastDrawnMenu: DrawnMenu?
 
     override init() {
-        let session = MenuBarApplication.makeSession(frontmost: WorkspaceFrontmost())
+        let ownBundle = Bundle.main.bundleIdentifier ?? ""
+        let externalApp = LastExternalApp(
+            ownProcessIdentifier: ProcessInfo.processInfo.processIdentifier,
+            ownBundleIdentifier: ownBundle
+        )
+        let session = MenuBarApplication.makeSession(frontmost: externalApp, ownBundleIdentifier: ownBundle)
         let observer = HookMenuObserver()
         let misses = HintMissBanner()
         self.session = session
@@ -125,6 +131,13 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
                 self?.refreshAfterHook()
             }
         }
+        let feed = WorkspaceActivationFeed(tracker: externalApp, onChange: { [weak self] in
+            Task { @MainActor in
+                self?.externalAppChanged()
+            }
+        })
+        feed.noteFrontmostNow()
+        activations = feed
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -306,6 +319,9 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
     }
 
     private func showSettings() {
+        // Presenting the window makes Supervim the frontmost app. The app to
+        // add is the one in front until then.
+        activations?.noteFrontmostNow()
         let panel = settingsPanel ?? ExclusionSettingsPanel(delegate: self)
         settingsPanel = panel
         panel.render(session.editor())
@@ -314,6 +330,12 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
 
     private func refreshSettings() {
         installMenu()
+        settingsPanel?.render(session.editor())
+    }
+
+    /// The add button names the app it would add, so it is redrawn when
+    /// another app comes to the front.
+    private func externalAppChanged() {
         settingsPanel?.render(session.editor())
     }
 
@@ -347,21 +369,30 @@ final class MenuBarApplication: NSObject, NSApplicationDelegate, ExclusionSettin
         }
     }
 
-    private static func makeSession(frontmost: WorkspaceFrontmost) -> MenuBarController<SystemKeyClock> {
+    private static func makeSession(
+        frontmost: LastExternalApp,
+        ownBundleIdentifier: String
+    ) -> MenuBarController<SystemKeyClock> {
         let clock = SystemKeyClock()
         if let defaults = UserDefaults(suiteName: UserDefaultsSettingsStore.applicationSuiteName) {
             let repository = SettingsRepository(store: UserDefaultsSettingsStore(defaults: defaults))
             if let session = try? MenuBarController(
                 repository: repository,
                 clock: clock,
-                frontmost: frontmost
+                frontmost: frontmost,
+                ownBundleIdentifier: ownBundleIdentifier
             ) {
                 return session
             }
         }
         let repository = SettingsRepository(store: InMemorySettingsStore())
         do {
-            return try MenuBarController(repository: repository, clock: clock, frontmost: frontmost)
+            return try MenuBarController(
+                repository: repository,
+                clock: clock,
+                frontmost: frontmost,
+                ownBundleIdentifier: ownBundleIdentifier
+            )
         } catch {
             preconditionFailure("in-memory settings must load")
         }
@@ -400,14 +431,6 @@ final class HookMenuObserver: RuntimeObserving, @unchecked Sendable {
         lock.lock()
         waiting = false
         lock.unlock()
-    }
-}
-
-struct WorkspaceFrontmost: FrontmostBundleProviding {
-    func frontmostBundleIdentifier() -> String {
-        MainActor.assumeIsolated {
-            NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        }
     }
 }
 #else

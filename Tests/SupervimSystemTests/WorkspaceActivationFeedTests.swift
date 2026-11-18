@@ -34,9 +34,9 @@ final class WorkspaceActivationFeedTests: XCTestCase {
         )
         let center = NotificationCenter()
         let changes = ChangeCount()
-        let feed = WorkspaceActivationFeed(tracker: tracker, center: center) {
+        let feed = WorkspaceActivationFeed(tracker: tracker, center: center, onChange: {
             changes.add()
-        }
+        })
 
         post(other, to: center)
         XCTAssertEqual(tracker.frontmostBundleIdentifier(), other.bundleIdentifier)
@@ -61,9 +61,9 @@ final class WorkspaceActivationFeedTests: XCTestCase {
         )
         let center = NotificationCenter()
         let changes = ChangeCount()
-        let feed = WorkspaceActivationFeed(tracker: tracker, center: center) {
+        let feed = WorkspaceActivationFeed(tracker: tracker, center: center, onChange: {
             changes.add()
-        }
+        })
 
         post(other, to: center)
         center.post(name: NSWorkspace.didActivateApplicationNotification, object: nil, userInfo: nil)

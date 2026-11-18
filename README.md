@@ -95,7 +95,7 @@ Supervim 启动后处于 Normal 模式。菜单栏图标显示当前模式：
 | 设置 | 作用 |
 | --- | --- |
 | Launch at Login | 登录时自动启动。需要 Supervim 在「应用程序」文件夹里 |
-| Excluded Apps | 排除列表。列表里的应用在前台时，Supervim 完全不拦截按键，包括暂停快捷键。默认有 Terminal、iTerm2、Emacs。`Add Frontmost App` 添加，`Remove` 移除 |
+| Excluded Apps | 排除列表。列表里的应用在前台时，Supervim 完全不拦截按键，包括暂停快捷键。默认有 Terminal、iTerm2、Emacs。添加按钮加的是打开设置窗口之前所在的应用，按钮上写着它的名字，例如 `Add "WeChat"`；要加别的应用，先切过去再切回设置窗口。`Remove` 移除 |
 
 ## 排查问题
 
