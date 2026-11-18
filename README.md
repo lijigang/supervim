@@ -170,6 +170,7 @@ These also differ from Vimium's defaults and are not marked on the sheet: there 
 - [任务 14 测试记录 / Task 14 test evidence](docs/task14-test-evidence.md)
 - [任务 15 测试记录 / Task 15 test evidence](docs/task15-test-evidence.md)
 - [应用图标测试记录 / App icon test evidence](docs/app-icon-test-evidence.md)
+- [应用图标预览 / App icon previews](docs/icon)
 - [手工验收清单 / Manual acceptance](docs/manual-acceptance.md)
 - [v0.1.5 证据：响应、偶发无响应、标签、外观 / v0.1.5 evidence: latency, missed keys, hints, look](docs/v0.1.5-evidence.md)
 - [界面打磨和预览图 / UI polish and previews](docs/ui-polish.md)
@@ -207,9 +208,9 @@ scripts/package-dmg.sh build/Supervim.app build/Supervim-0.1.0.dmg
 scripts/verify-dmg.sh build/Supervim-0.1.0.dmg
 ```
 
-应用图标是一张 1024 画布上的浅灰圆角方，正中一块绿色的普通模式光标。`scripts/make-icon.sh` 从同一套几何写出 `Resources/AppIcon.svg`、各尺寸 PNG 和 `Resources/AppIcon.icns`。macOS 上如果有 `iconutil`，脚本会用它重新打包 icns。组装时 icns 放进 `Contents/Resources`，`CFBundleIconFile` 是 `AppIcon`。菜单栏状态仍然是文字，`LSUIElement` 仍是 true，所以没有 Dock 图标。DMG 用同一张 icns 做卷图标。
+应用图标是一枚略微倾斜的浅灰键帽：键面上是绿色的小写 f，左上角浮着一块黄色提示标签，标签上是深色的大写 F。图形留在 1024 画布的 824 图标网格里，下面有一层柔和的投影。`scripts/make-icon.sh` 从同一套几何写出 `Resources/AppIcon.svg`、各尺寸 PNG 和 `Resources/AppIcon.icns`。16 点的两张和 32 点 1x 的一张是单独画的正视简化版，边缘落在整像素上；32 点 2x 保留倾斜，标签和字母放大。macOS 上如果有 `iconutil`，脚本会用它重新打包 icns。组装时 icns 放进 `Contents/Resources`，`CFBundleIconFile` 是 `AppIcon`。菜单栏的状态图形由代码绘制，不取自这张图。`LSUIElement` 仍是 true，所以没有 Dock 图标。DMG 用同一张 icns 做卷图标。预览图在 `docs/icon/`，用 `scripts/make-icon.sh --artifacts docs/icon` 重画。
 
-The app icon is a light rounded square on a 1024 canvas, with a green Normal-mode cursor in the center. `scripts/make-icon.sh` writes `Resources/AppIcon.svg`, the PNG sizes, and `Resources/AppIcon.icns` from that geometry. On macOS it repacks the icns with `iconutil` when that tool exists. Assembly copies the icns into `Contents/Resources` and `CFBundleIconFile` is `AppIcon`. The menu bar stays text, and `LSUIElement` stays true, so there is still no Dock icon. The DMG uses the same icns as its volume icon.
+The app icon is one light-gray keycap, tilted a few degrees, with a green lowercase f on its face and a yellow hint label with a dark F floating over its top-left corner. The drawing stays inside the 824 icon grid of a 1024 canvas and sits on a soft shadow. `scripts/make-icon.sh` writes `Resources/AppIcon.svg`, the PNG sizes, and `Resources/AppIcon.icns` from one set of geometry. The two 16-point slots and the 32-point slot at 1x are separate upright drawings on whole pixels; the 32-point slot at 2x keeps the tilt and enlarges the label and its letter. On macOS the script repacks the icns with `iconutil` when that tool exists. Assembly copies the icns into `Contents/Resources` and `CFBundleIconFile` is `AppIcon`. The menu-bar status glyph is drawn in code and does not come from this file. `LSUIElement` stays true, so there is still no Dock icon. The DMG uses the same icns as its volume icon. Previews are in `docs/icon/`; `scripts/make-icon.sh --artifacts docs/icon` redraws them.
 
 合并之后，在仓库上推送 tag `v0.1.0` 会触发 Release 工作流，生成 DMG 并创建 GitHub Release。也可以在 Actions 里手动运行 Release，版本号填 `0.1.0`。不要为了同一次发布既推 tag 又手动跑：手动运行会创建 tag，随后的 tag 工作流如果发现 Release 里已经有同名 DMG，就跳过重建。
 
@@ -221,10 +222,11 @@ Sources/SupervimCore          纯逻辑，不导入 AppKit 或事件框架。含
 Sources/SupervimSystem        系统适配。含菜单栏预检、UserDefaults、EventTap、AXScanner、Actuator、标签浮层、帮助浮层、滚动目录、命令会话、权限探测，以及 macOS 上的主应用登录项。另有 CGEvent 合成、不激活面板和输入框聚焦
 Sources/Supervim              菜单栏应用。启动时按偏好登记登录项；缺权限时显示引导；两项都授予后启动 AXScanner 并安装事件钩子
 App/Supervim/Info.plist       应用包清单，含 LSUIElement、CFBundleIconFile、com.lijigang.supervim 和版本号
-Resources/AppIcon.svg         图标源图。1024 透明画布、824 连续曲率圆角方、绿色光标块
+Resources/AppIcon.svg         图标源图。1024 透明画布、824 图标网格内的倾斜键帽、绿色小写 f、黄色 F 标签
 Resources/AppIcon-1024.png    提交的 1024 图标
 Resources/AppIcon.icns        提交的应用图标，含 16–1024 与 @2x
-scripts/make-icon.sh          生成 iconset 和 icns；macOS 上优先用 iconutil
+docs/icon                     图标预览：1024 原图、各尺寸的明暗对照、Finder 和 Dock 示意
+scripts/make-icon.sh          生成 iconset 和 icns；macOS 上优先用 iconutil；加 --artifacts docs/icon 重画预览
 scripts/assemble-app.sh       组装未签名 .app，放入 AppIcon.icns，release 时可写入版本号
 scripts/package-dmg.sh        用 create-dmg 打包。scripts/sign-app.sh 用稳定证书签名，没有证书时才 ad-hoc
 scripts/verify-dmg.sh         hdiutil 挂载并检查应用、Applications 链接、图标和卷图标
