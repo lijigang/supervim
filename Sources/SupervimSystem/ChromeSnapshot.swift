@@ -214,7 +214,7 @@ public enum ChromeSnapshot {
             notice: "",
             isVisible: true,
             windowTitle: "Settings",
-            addButtonTitle: "Add Frontmost App",
+            addButtonTitle: "Add \"Safari\"",
             removeButtonTitle: "Remove",
             launchAtLoginTitle: "Launch at Login"
         )
