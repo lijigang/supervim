@@ -258,15 +258,11 @@ private func makeShared(
     let hints: HintController?
     if let presenter {
         let elements = clickable.map { [$0] } ?? []
-        let cache = LockedClickableCache(
-            query: .elements(ClickableSnapshot(elements: elements, truncated: false))
-        )
         hints = HintController(
-            querier: pipeline.scanner,
+            querier: FixedClickables(elements: elements),
             presenter: presenter,
             actuator: actuator,
-            mode: menu.keyDecider,
-            cache: cache
+            mode: menu.keyDecider
         )
     } else {
         hints = nil
@@ -470,4 +466,17 @@ private func repoRoot(file: String = #filePath) -> URL {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
+}
+
+/// The hint controller scans when `f` is pressed. This is that scan.
+private final class FixedClickables: ClickableQuerying, @unchecked Sendable {
+    private let elements: [ClickableElement]
+
+    init(elements: [ClickableElement]) {
+        self.elements = elements
+    }
+
+    func clickableElements() -> ClickableQuery {
+        .elements(ClickableSnapshot(elements: elements, truncated: false))
+    }
 }

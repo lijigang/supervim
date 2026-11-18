@@ -5,7 +5,9 @@ import XCTest
 /// Hint labels, typed clicks, and cancellation behind a fake scanner and poster.
 /// The event hook itself must not scan or draw.
 final class HintOverlayTests: XCTestCase {
-    func testRefreshReadsTheScannerAndBeginHintDoesNot() {
+    func testBeginHintScansAgainInsteadOfTrustingAnOlderScan() {
+        // Labels from an older scan sit where the controls used to be.
+        // The page may have scrolled since, so `f` always reads the window.
         let rig = makeRig(elements: [oneBox()])
         XCTAssertEqual(rig.querier.reads, 0)
         guard case .elements(let snapshot) = rig.controller.refreshClickables() else {
@@ -14,14 +16,14 @@ final class HintOverlayTests: XCTestCase {
         XCTAssertEqual(snapshot.elements, [oneBox()])
         XCTAssertEqual(rig.querier.reads, 1)
 
-        rig.querier.query = .unavailable
+        rig.querier.query = .elements(ClickableSnapshot(elements: tenBoxes(), truncated: false))
         let begin = rig.interpreter.handleKeyDown(KeyEvent("f"), cache: safariFocus)
         let shown = rig.controller.consume(begin)
-        XCTAssertEqual(rig.querier.reads, 1)
+        XCTAssertEqual(rig.querier.reads, 2)
         guard case .showing(let presentation) = shown else {
-            return XCTFail("begin should use the cached snapshot, got \(shown)")
+            return XCTFail("begin should show the new scan, got \(shown)")
         }
-        XCTAssertEqual(presentation.markers.map(\.text), ["F"])
+        XCTAssertEqual(presentation.markers.count, 10)
         XCTAssertEqual(presentation.policy, .hintLabels)
     }
 
@@ -64,7 +66,7 @@ final class HintOverlayTests: XCTestCase {
             rig.interpreter.handleKeyDown(KeyEvent("j"), cache: safariFocus).actions,
             [CommandMap().action(for: .scrollDown)]
         )
-        XCTAssertEqual(rig.querier.reads, 1)
+        XCTAssertEqual(rig.querier.reads, 2)
     }
 
     func testFCommandClicksWithCommandAndNotAContextMenu() {
@@ -451,7 +453,7 @@ final class HintOverlayTests: XCTestCase {
         XCTAssertEqual(presentation.markers.count, 10)
         XCTAssertEqual(presentation.markers.first?.text, "F")
         XCTAssertEqual(rig.poster.effects, [])
-        XCTAssertEqual(rig.querier.reads, 2)
+        XCTAssertEqual(rig.querier.reads, 4)
     }
 
     func testUnusableCachedFramesAreNotLabeled() {
@@ -491,11 +493,11 @@ final class HintOverlayTests: XCTestCase {
         _ = rig.interpreter.handleKeyDown(KeyEvent("F"), cache: safariFocus)
         XCTAssertEqual(rig.interpreter.mode, .hint(.command))
         guard case .showing(let presentation) = hints.enterHint(.command) else {
-            return XCTFail("enterHint should show the cached labels")
+            return XCTFail("enterHint should show the labels it scanned")
         }
         XCTAssertEqual(presentation.markers.count, 27)
         XCTAssertEqual(presentation.policy, .hintLabels)
-        XCTAssertEqual(rig.querier.reads, 1)
+        XCTAssertEqual(rig.querier.reads, 2)
         XCTAssertEqual(rig.poster.effects, [])
         XCTAssertEqual(rig.interpreter.mode, .hint(.command))
 

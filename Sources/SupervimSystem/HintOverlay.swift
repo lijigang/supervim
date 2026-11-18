@@ -53,10 +53,6 @@ public enum HintCancelReason: Equatable, Sendable {
     case dismissed
 }
 
-/// What the app calls after it has already decided to hint.
-/// Entering hint does not scan and does not install an event tap.
-/// The caller moves ModeMachine into Hint before `enterHint`, then feeds
-/// later keys here. `cancelHint` hides the labels and leaves Hint.
 public enum VisionHintResult: Equatable, Sendable {
     case skipped
     case targets([HintTarget])
@@ -74,6 +70,9 @@ public protocol VisionHintServing: AnyObject, Sendable {
     )
 }
 
+/// What the app calls after it has already decided to hint.
+/// The caller moves ModeMachine into Hint before `enterHint`, then feeds
+/// later keys here. `cancelHint` hides the labels and leaves Hint.
 public protocol HintOverlayControlling: AnyObject, Sendable {
     func refreshClickables() -> ClickableQuery
     func enterHint(_ click: HintClick) -> HintOverlayResult
@@ -117,15 +116,34 @@ public final class LockedClickableCache: @unchecked Sendable {
     }
 }
 
-/// Shows cached hint labels and clicks when a label is completed.
+/// Scans, shows hint labels and clicks when a label is completed.
 ///
-/// `consume` reads the cache and does not call `clickableElements()`.
-/// The caller refreshes that cache off the event hook. A plain click is a
-/// left click at the element center. Command click holds Command and is not
-/// a context menu. Accessibility Press is not used: the snapshot has no
-/// bound element, and a press with a dangling identifier would do nothing.
-/// `canAccessibilityPress: false` keeps the actuator on the mouse path.
+/// `enterHint` starts a new scan of the window every time. Labels from an
+/// earlier scan are not reused: the page may have scrolled or loaded since,
+/// and a label in the wrong place clicks the wrong thing.
+///
+/// With a `scanning` scheduler, `enterHint` returns before the scan starts
+/// and the labels appear when it ends. Keys typed in between are kept and
+/// replayed in order once the labels exist. A cancel, or a second
+/// `enterHint`, makes the scan in flight a no-op. Without a scheduler the
+/// scan runs inside `enterHint`, which is what the tests of the label logic
+/// use.
+///
+/// The vision pass starts before the accessibility scan for the bundle ids
+/// in `visionBundles`, because those always use it. For other apps it starts
+/// only after the scan found nothing.
+///
+/// A plain click is `AXPress` when the element offers it, with the frame
+/// center as the fallback. Command click holds Command and is not a context
+/// menu.
 public final class HintController: HintOverlayControlling, @unchecked Sendable {
+    private enum Phase {
+        case idle
+        case scanning
+        case waitingForVision
+        case active
+    }
+
     private let querier: any ClickableQuerying
     private let presenter: any OverlayPresenting
     private let actuator: ActionActuator
@@ -134,12 +152,19 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     private let misses: HintMissBanner?
     private let vision: (any VisionHintServing)?
     private let frontBundle: @Sendable () -> String
+    private let scanning: (any WorkScheduling)?
+    private let visionBundles: @Sendable () -> [String]
     private let lock = NSLock()
     private var session: HintSession?
-    private var waitingForVision = false
+    private var phase = Phase.idle
+    private var generation = 0
     private var pendingClick: HintClick = .plain
     private var pendingTargets: [HintTarget] = []
-    private var bufferedKeys: [KeyEvent] = []
+    private var bufferedKeys: [(event: KeyEvent, keyCode: UInt16?)] = []
+    private var earlyVision: VisionHintResult?
+    private var lastResult = HintOverlayResult.unchanged
+    private var watch = TraceStopwatch()
+    private var activation: (@Sendable () -> Void)?
 
     public init(
         querier: any ClickableQuerying,
@@ -149,7 +174,9 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
         cache: LockedClickableCache = LockedClickableCache(),
         misses: HintMissBanner? = nil,
         vision: (any VisionHintServing)? = nil,
-        frontBundle: @escaping @Sendable () -> String = { "" }
+        frontBundle: @escaping @Sendable () -> String = { "" },
+        scanning: (any WorkScheduling)? = nil,
+        visionBundles: @escaping @Sendable () -> [String] = { [] }
     ) {
         self.querier = querier
         self.presenter = presenter
@@ -159,6 +186,17 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
         self.misses = misses
         self.vision = vision
         self.frontBundle = frontBundle
+        self.scanning = scanning
+        self.visionBundles = visionBundles
+    }
+
+    /// Called after a label was clicked. The app uses it to read focus
+    /// again: an app that sends no focus notification would otherwise keep
+    /// the mode the click made stale.
+    public func onActivation(_ handler: @escaping @Sendable () -> Void) {
+        lock.lock()
+        activation = handler
+        lock.unlock()
     }
 
     @discardableResult
@@ -168,7 +206,7 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
         return query
     }
 
-    /// Maps a decision the event hook already returned. Does not scan.
+    /// Maps a decision the event hook already returned.
     /// `beginHint` is `enterHint`, a hint key is `receiveHintKey`, and
     /// `endHint` is `cancelHint`. `showHelp` stays ignored here.
     /// `HelpController` claims that update.
@@ -192,8 +230,28 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     @discardableResult
     public func enterHint(_ click: HintClick) -> HintOverlayResult {
         lock.lock()
-        defer { lock.unlock() }
-        return begin(click)
+        generation += 1
+        let ticket = generation
+        session = nil
+        phase = .scanning
+        pendingClick = click
+        pendingTargets = []
+        bufferedKeys = []
+        earlyVision = nil
+        watch = TraceStopwatch()
+        let waiting = HintOverlayResult.showing(OverlayPresentation(markers: [], policy: .hintLabels))
+        lastResult = waiting
+        lock.unlock()
+        guard let scanning else {
+            scan(ticket: ticket, click: click)
+            lock.lock()
+            defer { lock.unlock() }
+            return lastResult
+        }
+        scanning.run { [self] in
+            scan(ticket: ticket, click: click)
+        }
+        return waiting
     }
 
     @discardableResult
@@ -210,40 +268,105 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
         return dismiss()
     }
 
-    private func begin(_ click: HintClick) -> HintOverlayResult {
-        let targets = loadTargets()
-        guard let vision else {
-            return show(targets, click: click)
+    /// Off the key hook when a scheduler was given.
+    private func scan(ticket: Int, click: HintClick) {
+        guard isCurrent(ticket) else {
+            return
         }
-        let gate = VisionGate()
-        gate.begin()
         let bundle = frontBundle()
-        vision.prepareHints(bundleIdentifier: bundle, axHitCount: targets.count) { [weak self] result in
-            gate.receive(result) { [weak self] late in
-                self?.finishVision(late)
-            }
+        let early = vision != nil && visionBundles().contains(bundle)
+        if early {
+            requestVision(ticket: ticket, bundle: bundle, axHitCount: 0)
         }
-        if let immediate = gate.end() {
-            return applyVision(immediate, axTargets: targets, click: click)
+        let scanWatch = TraceStopwatch()
+        let query = querier.clickableElements()
+        cache.replace(query)
+        let targets: [HintTarget]
+        switch query {
+        case .unavailable:
+            targets = []
+        case .elements(let snapshot):
+            targets = Self.rankedTargets(snapshot.elements)
         }
-        waitingForVision = true
-        pendingClick = click
+        ModeTrace.noteTiming(
+            stage: "hint-scan",
+            milliseconds: scanWatch.milliseconds,
+            fields: [("targets", "\(targets.count)"), ("bundle", bundle.isEmpty ? "-" : bundle)]
+        )
+
+        lock.lock()
+        guard generation == ticket, phase == .scanning else {
+            lock.unlock()
+            return
+        }
+        guard vision != nil else {
+            finish(show(targets, click: click))
+            lock.unlock()
+            return
+        }
+        if early, let result = earlyVision {
+            earlyVision = nil
+            finish(applyVision(result, axTargets: targets, click: click))
+            lock.unlock()
+            return
+        }
+        phase = .waitingForVision
         pendingTargets = targets
-        bufferedKeys = []
-        return .showing(OverlayPresentation(markers: [], policy: .hintLabels))
+        lock.unlock()
+        if !early {
+            requestVision(ticket: ticket, bundle: bundle, axHitCount: targets.count)
+        }
     }
 
-    private func loadTargets() -> [HintTarget] {
-        var current = cache.current()
-        if !Self.hasUsableTarget(current) {
-            current = querier.clickableElements()
-            cache.replace(current)
+    private func isCurrent(_ ticket: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation == ticket && phase != .idle
+    }
+
+    /// The completion may run before `prepareHints` returns, on this thread.
+    private func requestVision(ticket: Int, bundle: String, axHitCount: Int) {
+        let visionWatch = TraceStopwatch()
+        vision?.prepareHints(bundleIdentifier: bundle, axHitCount: axHitCount) { [weak self] result in
+            if result != .skipped {
+                ModeTrace.noteTiming(stage: "hint-vision", milliseconds: visionWatch.milliseconds, fields: [])
+            }
+            self?.receiveVision(result, ticket: ticket)
         }
-        switch current {
-        case .unavailable:
-            return []
-        case .elements(let snapshot):
-            return Self.rankedTargets(snapshot.elements)
+    }
+
+    private func receiveVision(_ result: VisionHintResult, ticket: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == ticket else {
+            return
+        }
+        switch phase {
+        case .scanning:
+            earlyVision = result
+        case .waitingForVision:
+            let targets = pendingTargets
+            pendingTargets = []
+            finish(applyVision(result, axTargets: targets, click: pendingClick))
+        case .idle, .active:
+            return
+        }
+    }
+
+    /// Records what the scan led to and replays the keys typed meanwhile.
+    private func finish(_ shown: HintOverlayResult) {
+        lastResult = shown
+        let keys = bufferedKeys
+        bufferedKeys = []
+        guard case .showing = shown else {
+            return
+        }
+        for key in keys {
+            let result = type(key.event, keyCode: key.keyCode)
+            lastResult = result
+            guard case .showing = result else {
+                return
+            }
         }
     }
 
@@ -273,26 +396,6 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
         }
     }
 
-    private func finishVision(_ result: VisionHintResult) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard waitingForVision else {
-            return
-        }
-        waitingForVision = false
-        let click = pendingClick
-        let axTargets = pendingTargets
-        let keys = bufferedKeys
-        bufferedKeys = []
-        let shown = applyVision(result, axTargets: axTargets, click: click)
-        guard case .showing = shown else {
-            return
-        }
-        for key in keys {
-            _ = type(key, keyCode: nil)
-        }
-    }
-
     private func show(_ targets: [HintTarget], click: HintClick) -> HintOverlayResult {
         if targets.isEmpty, case .unavailable = cache.current() {
             return stop(.unavailable)
@@ -302,12 +405,19 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
             return stop(.noTargets)
         }
         session = started
-        return show(started.markers, typedPrefix: started.typedText)
+        phase = .active
+        let shown = show(started.markers, typedPrefix: started.typedText)
+        ModeTrace.noteTiming(
+            stage: "hint-visible",
+            milliseconds: watch.milliseconds,
+            fields: [("labels", "\(started.markers.count)")]
+        )
+        return shown
     }
 
     private func type(_ event: KeyEvent, keyCode: UInt16?) -> HintOverlayResult {
-        if waitingForVision {
-            bufferedKeys.append(event)
+        if phase == .scanning || phase == .waitingForVision {
+            bufferedKeys.append((event, keyCode))
             return .showing(OverlayPresentation(markers: [], policy: .hintLabels))
         }
         guard var current = session, current.isActive else {
@@ -325,8 +435,10 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
             case .activated(let activation):
                 let outcome = actuator.click(Self.request(for: activation))
                 session = nil
+                phase = .idle
                 presenter.hideOverlay()
                 _ = mode.endHint(.completed)
+                self.activation?()
                 return .activated(activation, outcome)
             case .cancelled:
                 return stop(.invalidInput)
@@ -348,8 +460,11 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     }
 
     private func dismiss() -> HintOverlayResult {
-        waitingForVision = false
+        generation += 1
+        phase = .idle
         bufferedKeys = []
+        pendingTargets = []
+        earlyVision = nil
         session = nil
         presenter.hideOverlay()
         _ = mode.endHint(.cancelled)
@@ -357,8 +472,9 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
     }
 
     private func stop(_ reason: HintCancelReason, banner: String? = nil) -> HintOverlayResult {
-        waitingForVision = false
+        phase = .idle
         bufferedKeys = []
+        pendingTargets = []
         if reason == .noTargets || reason == .unavailable {
             if let banner {
                 misses?.report(banner)
@@ -391,22 +507,6 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
             elementID: activation.identifier,
             canAccessibilityPress: press
         )
-    }
-
-    private static func hasUsableTarget(_ query: ClickableQuery) -> Bool {
-        switch query {
-        case .unavailable:
-            return false
-        case .elements(let snapshot):
-            return snapshot.elements.contains { element in
-                HintRect(
-                    x: element.frame.x,
-                    y: element.frame.y,
-                    width: element.frame.width,
-                    height: element.frame.height
-                ).isUsable
-            }
-        }
     }
 
     /// Easiest labels go to the controls `HintRanking` puts first.
@@ -446,40 +546,5 @@ public final class HintController: HintOverlayControlling, @unchecked Sendable {
         let identifier = joined.isEmpty ? nil : joined
         let canPress = element.actions.contains("AXPress")
         return HintTarget(frame: frame, identifier: identifier, canAccessibilityPress: canPress)
-    }
-}
-
-/// Holds a vision result that arrives before `prepareHints` returns.
-/// A later result is delivered on the callback instead.
-private final class VisionGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var holding = false
-    private var pending: VisionHintResult?
-
-    func begin() {
-        lock.lock()
-        holding = true
-        pending = nil
-        lock.unlock()
-    }
-
-    func receive(_ result: VisionHintResult, late: @escaping @Sendable (VisionHintResult) -> Void) {
-        lock.lock()
-        if holding {
-            pending = result
-            lock.unlock()
-            return
-        }
-        lock.unlock()
-        late(result)
-    }
-
-    func end() -> VisionHintResult? {
-        lock.lock()
-        holding = false
-        let value = pending
-        pending = nil
-        lock.unlock()
-        return value
     }
 }
