@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import XCTest
 @testable import SupervimCore
 @testable import SupervimSystem
@@ -53,6 +54,100 @@ final class LiveBenchmarkTests: XCTestCase {
                     + "keystroke_ms=\(Self.text(Self.median(keystroke))) hide_ms=\(Self.text(Self.median(hide)))"
             )
         }
+    }
+
+    /// Times text recognition on the same drawn chat window at the size
+    /// v0.1.4 captured (every backing pixel) and at the capped size. The
+    /// picture is drawn here, so no Screen Recording permission is needed.
+    func testVisionRecognitionTimings() throws {
+        guard ProcessInfo.processInfo.environment["SUPERVIM_LIVE_AX_BENCH"] == "1" else {
+            throw XCTSkip("set SUPERVIM_LIVE_AX_BENCH=1 to time text recognition")
+        }
+        let points = CGSize(width: 1_400, height: 900)
+        let capped = VisionCaptureSizing.scale(width: 1_400, height: 900, backingScale: 2)
+        let sizes: [(String, Double)] = [("v0.1.4-every-pixel", 2), ("capped", capped)]
+        var images: [CGImage] = []
+        for size in sizes {
+            guard let image = Self.chatImage(points: points, scale: size.1) else {
+                throw XCTSkip("could not draw the test image")
+            }
+            images.append(image)
+        }
+        // The first request loads the recognition model. It is not counted.
+        _ = SystemVisionHints.recognize(images[1])
+        var samples = [[Double]](repeating: [], count: sizes.count)
+        var lines = [Int](repeating: 0, count: sizes.count)
+        for _ in 0..<3 {
+            for index in sizes.indices {
+                samples[index].append(Self.milliseconds {
+                    lines[index] = SystemVisionHints.recognize(images[index]).filter { $0.kind == .text }.count
+                })
+            }
+        }
+        for index in sizes.indices {
+            print(
+                "BENCH vision recognize=\(sizes[index].0) image=\(images[index].width)x\(images[index].height) "
+                    + "text_lines=\(lines[index]) drawn_lines=\(Self.chatLineCount) \(Self.summary(samples[index]))"
+            )
+        }
+    }
+
+    private static let chatNames = [
+        "文件传输助手", "产品讨论组", "李继刚", "Design Weekly", "家人群", "王小明",
+        "订阅号消息", "项目进度同步", "张三", "Supervim 测试", "周末爬山", "读书会",
+    ]
+    private static let chatMessages = [
+        "早上好，今天的会议改到下午三点", "收到，我把文档发到群里", "The build is green on main now",
+        "好的，辛苦了", "晚上一起吃饭吗", "可以，六点半楼下见", "标签出现得比以前快多了",
+        "Please review the pull request when you can", "明天见", "没问题",
+    ]
+    private static var chatLineCount: Int {
+        chatNames.count * 2 + chatMessages.count
+    }
+
+    /// A chat window in the shape of WeChat: a list of conversations on the
+    /// left, messages on the right. `scale` is pixels per point.
+    private static func chatImage(points: CGSize, scale: Double) -> CGImage? {
+        let width = Int((points.width * scale).rounded())
+        let height = Int((points.height * scale).rounded())
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+        context.scaleBy(x: scale, y: scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: points).fill()
+        NSColor(white: 0.93, alpha: 1).setFill()
+        NSRect(x: 0, y: 0, width: 300, height: points.height).fill()
+        let name: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14),
+            .foregroundColor: NSColor.black,
+        ]
+        let preview: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor.darkGray,
+        ]
+        for (index, title) in chatNames.enumerated() {
+            let y = points.height - 70 - CGFloat(index) * 66
+            (title as NSString).draw(at: NSPoint(x: 70, y: y + 22), withAttributes: name)
+            ("好的，明天上午十点见 \(index + 1)" as NSString).draw(at: NSPoint(x: 70, y: y), withAttributes: preview)
+        }
+        for (index, message) in chatMessages.enumerated() {
+            let y = points.height - 90 - CGFloat(index) * 72
+            let x: CGFloat = index % 2 == 0 ? 360 : 820
+            (message as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: name)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        return context.makeImage()
     }
 
     /// Times one real window three ways: the v0.1.4 reader, which asks for

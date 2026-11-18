@@ -86,7 +86,7 @@ public final class SystemVisionHints: VisionHintServing, @unchecked Sendable {
         }
         let captureMilliseconds = captureWatch.milliseconds
         let recognizeWatch = TraceStopwatch()
-        let boxes = recognize(image)
+        let boxes = Self.recognize(image)
         ModeTrace.noteTiming(
             stage: "vision",
             milliseconds: captureMilliseconds + recognizeWatch.milliseconds,
@@ -248,7 +248,9 @@ public final class SystemVisionHints: VisionHintServing, @unchecked Sendable {
         )
     }
 
-    private func recognize(_ image: CGImage) -> [VisionBox] {
+    /// Text lines and rectangles in `image`. Static so the benchmark can
+    /// time it on a drawn image, with no screen capture involved.
+    static func recognize(_ image: CGImage) -> [VisionBox] {
         let text = VNRecognizeTextRequest()
         text.recognitionLevel = .accurate
         text.recognitionLanguages = ["zh-Hans", "en-US"]
@@ -283,7 +285,7 @@ public final class SystemVisionHints: VisionHintServing, @unchecked Sendable {
         return boxes
     }
 
-    private func normalized(_ box: CGRect) -> HintRect {
+    private static func normalized(_ box: CGRect) -> HintRect {
         HintRect(x: box.origin.x, y: box.origin.y, width: box.width, height: box.height)
     }
 
