@@ -122,9 +122,12 @@ private final class PanelHolder {
     private var hintPanels: [NSPanel] = []
     private var canvases: [HintCanvasView] = []
     private var sizes: [String: NSSize] = [:]
+    /// Read once. `classic` unless the user set `HintLabelStyle.defaultsKey`.
+    private let style: HintLabelStyle
 
     init() {
         panel = Self.makePanel()
+        style = HintLabelStyle.preferred()
     }
 
     func hideAll() {
@@ -166,6 +169,7 @@ private final class PanelHolder {
             let created = Self.makePanel()
             let canvas = HintCanvasView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
             canvas.autoresizingMask = [.width, .height]
+            canvas.style = style
             created.contentView = canvas
             hintPanels.append(created)
             canvases.append(canvas)
@@ -179,7 +183,7 @@ private final class PanelHolder {
         if sizes.count > 4_000 {
             sizes.removeAll(keepingCapacity: true)
         }
-        let measured = HintBadgePainter.size(for: label)
+        let measured = HintLabelRenderer.size(for: label, style: style)
         sizes[label] = measured
         return measured
     }
@@ -188,6 +192,7 @@ private final class PanelHolder {
         ensureHintPanels(1)
         let size = badgeSize("AS")
         let canvas = HintCanvasView(frame: NSRect(origin: .zero, size: size))
+        canvas.style = style
         canvas.replace([HintCanvasView.Badge(label: "AS", frame: canvas.bounds)], typedPrefix: "a")
         if let bitmap = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds) {
             canvas.cacheDisplay(in: canvas.bounds, to: bitmap)
@@ -211,52 +216,37 @@ private final class PanelHolder {
                 ModeTrace.noteLine(ModeTrace.formatHintPlace(screen: screen, index: index))
             }
         }
-        var texts: [String] = []
-        var labels: [HintRect] = []
-        texts.reserveCapacity(markers.count)
-        labels.reserveCapacity(markers.count)
-        for marker in markers {
-            let element = HintRect(
-                x: marker.anchor.x,
-                y: marker.anchor.y,
-                width: marker.elementWidth,
-                height: marker.elementHeight
-            )
-            let size = badgeSize(marker.text)
-            guard let placed = HintGeometry.labelRect(
-                element: element,
-                badgeWidth: Double(size.width),
-                badgeHeight: Double(size.height),
-                screens: screens
-            ) else {
-                continue
-            }
-            if tracing {
-                ModeTrace.noteLine(ModeTrace.formatHintLabel(index: marker.index, ax: element, ns: placed))
-            }
-            texts.append(marker.text)
-            labels.append(placed)
+        let arrangement = HintOverlayLayout.arrange(markers: markers, style: style, screens: screens) { text in
+            let size = badgeSize(text)
+            return HintBadgeSize(width: Double(size.width), height: Double(size.height))
         }
-        let nudged = HintGeometry.nudge(labels)
-        if nudged.count == labels.count {
-            labels = nudged
+        if tracing {
+            for label in arrangement.labels {
+                ModeTrace.noteLine(
+                    ModeTrace.formatHintLabel(index: label.markerIndex, ax: label.element, ns: label.placed)
+                )
+            }
         }
-        let groups = HintGeometry.panels(labels: labels, screens: screens)
+        let labels = arrangement.labels
+        let groups = arrangement.panels
         ensureHintPanels(groups.count)
         for (slot, group) in groups.enumerated() {
             let hintPanel = hintPanels[slot]
             let canvas = canvases[slot]
             var badges: [HintCanvasView.Badge] = []
             badges.reserveCapacity(group.items.count)
-            for item in group.items where texts.indices.contains(item.sourceIndex) {
+            for item in group.items where labels.indices.contains(item.sourceIndex) {
+                let label = labels[item.sourceIndex]
                 badges.append(HintCanvasView.Badge(
-                    label: texts[item.sourceIndex],
+                    label: label.text,
                     frame: NSRect(
                         x: CGFloat(item.local.x),
                         y: CGFloat(item.local.y),
                         width: CGFloat(item.local.width),
                         height: CGFloat(item.local.height)
-                    )
+                    ),
+                    tipX: label.box.tipX.map { CGFloat($0 - group.frame.x) },
+                    tailDown: label.box.tailDown
                 ))
             }
             let frame = NSRect(

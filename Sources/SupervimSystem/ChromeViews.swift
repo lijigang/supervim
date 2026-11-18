@@ -59,9 +59,10 @@ func chromeDraw(
     attributed.draw(in: rect)
 }
 
-/// Draws hint labels. One painter is made per drawing pass: it resolves the
-/// colors, the font and the accessibility settings once, and then draws any
-/// number of labels with them.
+/// Draws hint labels in the shipped style, `HintLabelStyle.classic`. One
+/// painter is made per drawing pass: it resolves the colors, the font and
+/// the accessibility settings once, and then draws any number of labels
+/// with them. `HintLabelRenderer` picks between this and the candidates.
 ///
 /// A label is a near-opaque gray pill with a hairline edge and a soft
 /// shadow, the green cursor block on the left, and SF Mono Semibold 12.
@@ -192,13 +193,15 @@ struct HintBadgePainter {
 public final class HintBadgeView: NSView {
     public let label: String
     public let typedPrefix: String
+    public let style: HintLabelStyle
     public var forcesIncreaseContrast: Bool?
     public var forcesDifferentiateWithoutColor: Bool?
     public var forcesReduceTransparency: Bool?
 
-    public init(label: String, typedPrefix: String) {
+    public init(label: String, typedPrefix: String, style: HintLabelStyle = .shipped) {
         self.label = label
         self.typedPrefix = typedPrefix
+        self.style = style
         super.init(frame: .zero)
         frame.size = badgeSize
     }
@@ -211,11 +214,12 @@ public final class HintBadgeView: NSView {
     public override var isOpaque: Bool { false }
 
     public var badgeSize: NSSize {
-        HintBadgePainter.size(for: label)
+        HintLabelRenderer.size(for: label, style: style)
     }
 
     public override func draw(_ dirtyRect: NSRect) {
-        HintBadgePainter(
+        HintLabelRenderer(
+            style: style,
             appearance: effectiveAppearance,
             contrast: forcesIncreaseContrast,
             differentiate: forcesDifferentiateWithoutColor,
@@ -231,8 +235,12 @@ final class HintCanvasView: NSView {
     struct Badge {
         var label: String
         var frame: NSRect
+        /// Where a caret's tip goes, in this view's coordinates.
+        var tipX: CGFloat?
+        var tailDown = false
     }
 
+    var style: HintLabelStyle = .shipped
     private var badges: [Badge] = []
     private var typedPrefix = ""
 
@@ -248,9 +256,15 @@ final class HintCanvasView: NSView {
         guard !badges.isEmpty else {
             return
         }
-        let painter = HintBadgePainter(appearance: effectiveAppearance)
+        let renderer = HintLabelRenderer(style: style, appearance: effectiveAppearance)
         for badge in badges where badge.frame.intersects(dirtyRect) {
-            painter.draw(label: badge.label, typedPrefix: typedPrefix, in: badge.frame)
+            renderer.draw(
+                label: badge.label,
+                typedPrefix: typedPrefix,
+                in: badge.frame,
+                tipX: badge.tipX,
+                tailDown: badge.tailDown
+            )
         }
     }
 }
