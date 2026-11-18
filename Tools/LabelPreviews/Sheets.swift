@@ -162,6 +162,8 @@ struct StyleShots {
     let browser: NSBitmapImageRep
     let chat: NSBitmapImageRep
     let typed: NSBitmapImageRep
+    /// Frames of the labels in `typed`, from the picture's top-left corner.
+    let typedFrames: [NSRect]
 }
 
 /// The labels of the two scenes: before a key, and after the first key of a
@@ -186,54 +188,51 @@ struct PreviewLabels {
         typed = remaining
         typedText = session.typedText
     }
-
-    /// The window of `size` in the browser scene that holds the most of the
-    /// labels left after the key, centred on them. A label may lie on its
-    /// target or hang under it, so room for both is counted with the target.
-    func typedCrop(size: NSSize) -> NSRect {
-        let scene = PreviewScenes.browser.size
-        let reaches = typed.map { marker in
-            NSRect(
-                x: marker.anchor.x - 28,
-                y: marker.anchor.y - 8,
-                width: min(marker.elementWidth, 24) + 60,
-                height: min(marker.elementHeight, 28) + 40
-            )
-        }
-        var best = NSRect(origin: .zero, size: size)
-        var bestCount = -1
-        var y: CGFloat = 0
-        while y + size.height <= scene.height {
-            var x: CGFloat = 0
-            while x + size.width <= scene.width {
-                let window = NSRect(x: x, y: y, width: size.width, height: size.height)
-                let count = reaches.filter { window.contains($0) }.count
-                if count > bestCount {
-                    bestCount = count
-                    best = window
-                }
-                x += 6
-            }
-            y += 6
-        }
-        let held = reaches.filter { best.contains($0) }
-        guard let first = held.first else {
-            return best
-        }
-        let union = held.dropFirst().reduce(first) { $0.union($1) }
-        return NSRect(
-            x: min(max((union.midX - size.width / 2).rounded(), 0), scene.width - size.width),
-            y: min(max((union.midY - size.height / 2).rounded(), 0), scene.height - size.height),
-            width: size.width,
-            height: size.height
-        )
-    }
 }
 
 @MainActor
 enum LabelSheets {
     static let sceneScale: CGFloat = 4
     static let sheetScale: CGFloat = 2
+
+    /// The window of `size` in a scene of `scene` that shows the most of
+    /// `frames` whole. A frame cut by the window's edge counts against it.
+    /// Among equal windows the one with its labels nearest its middle wins.
+    static func densestWindow(frames: [NSRect], size: NSSize, scene: NSSize) -> NSRect {
+        var best = NSRect(origin: .zero, size: size)
+        var bestScore = Int.min
+        var bestOffset = CGFloat.greatestFiniteMagnitude
+        var y: CGFloat = 0
+        while y + size.height <= scene.height {
+            var x: CGFloat = 0
+            while x + size.width <= scene.width {
+                let window = NSRect(x: x, y: y, width: size.width, height: size.height)
+                var whole = 0
+                var cut = 0
+                var union = NSRect.zero
+                for frame in frames where window.intersects(frame) {
+                    if window.contains(frame) {
+                        whole += 1
+                        union = union.isEmpty ? frame : union.union(frame)
+                    } else {
+                        cut += 1
+                    }
+                }
+                let score = whole * 2 - cut * 3
+                let offset = union.isEmpty
+                    ? CGFloat.greatestFiniteMagnitude
+                    : abs(union.midX - window.midX) + abs(union.midY - window.midY)
+                if score > bestScore || (score == bestScore && offset < bestOffset) {
+                    bestScore = score
+                    bestOffset = offset
+                    best = window
+                }
+                x += 2
+            }
+            y += 2
+        }
+        return best
+    }
 
     static let zoomSize = NSSize(width: 262, height: 100)
     static let browserZoom = NSRect(x: 0, y: 6, width: 262, height: 100)
@@ -242,6 +241,8 @@ enum LabelSheets {
     static let compareCell = NSSize(width: 270, height: 150)
     static let compareBrowser = NSRect(x: 0, y: 4, width: 270, height: 150)
     static let compareChat = NSRect(x: 0, y: 8, width: 270, height: 150)
+    /// The sidebar list of the browser scene: six links, one every 22pt.
+    static let compareTyped = NSRect(x: 430, y: 164, width: 270, height: 172)
 
     static func fileStem(_ style: HintLabelStyle) -> String {
         style.optionLetter.map { "option-\($0)" } ?? "current"
@@ -308,7 +309,14 @@ enum LabelSheets {
     }
 
     static func shots(style: HintLabelStyle, dark: Bool, labels: PreviewLabels) throws -> StyleShots {
-        StyleShots(
+        let typedFrames = HintLabelPreviewView(
+            markers: labels.typed,
+            typedPrefix: labels.typedText,
+            style: style,
+            size: PreviewScenes.browser.size,
+            pass: labels.browser
+        ).labelFrames
+        return StyleShots(
             browser: try Raster.render(
                 labelled(scene: PreviewScenes.browser, markers: labels.browser, typed: "", style: style),
                 dark: dark, scale: sceneScale
@@ -326,7 +334,8 @@ enum LabelSheets {
                     pass: labels.browser
                 ),
                 dark: dark, scale: sceneScale
-            )
+            ),
+            typedFrames: typedFrames
         )
     }
 
@@ -393,7 +402,7 @@ enum LabelSheets {
         panel(shots.typed, x: margin, y: secondRow, size: browser,
               caption: "Browser · after typing \(typedKey) · \(labels.typed.count) labels left")
 
-        let typedZoom = labels.typedCrop(size: zoomSize)
+        let typedZoom = densestWindow(frames: shots.typedFrames, size: zoomSize, scene: browser)
         let strips: [(NSBitmapImageRep, NSRect, String)] = [
             (shots.browser, browserZoom, "2× · toolbar and site header"),
             (shots.typed, typedZoom, "2× · after typing \(typedKey)"),
@@ -468,7 +477,6 @@ enum LabelSheets {
         let header: CGFloat = 58
         let specimenHeight: CGFloat = 68
         let width = gutter + CGFloat(styles.count) * cell.width + CGFloat(styles.count - 1) * gap + margin
-        let typedCrop = labels.typedCrop(size: cell)
         let typedKey = labels.typedText.uppercased()
 
         enum Kind {
@@ -490,7 +498,9 @@ enum LabelSheets {
             rows.append(Row(title: name, subtitle: "2× labels", dark: dark, height: specimenHeight, kind: .specimen))
             rows.append(Row(title: name, subtitle: "browser", dark: dark, height: cell.height, kind: .browser))
             rows.append(Row(title: name, subtitle: "chat", dark: dark, height: cell.height, kind: .chat))
-            rows.append(Row(title: name, subtitle: "after \(typedKey)", dark: dark, height: cell.height, kind: .typed))
+            rows.append(Row(
+                title: name, subtitle: "after \(typedKey)", dark: dark, height: compareTyped.height, kind: .typed
+            ))
         }
         let height = header + rows.reduce(0) { $0 + $1.height + gap } + margin - gap
         let sheet = SheetView(size: NSSize(width: width, height: height), background: ink.background)
@@ -532,7 +542,7 @@ enum LabelSheets {
                     }
                 case .typed:
                     if let rep = shots[style]?[row.dark]?.typed {
-                        sheet.add(.picture(rep, source: typedCrop, dest: dest, radius: 8))
+                        sheet.add(.picture(rep, source: compareTyped, dest: dest, radius: 8))
                     }
                 }
                 sheet.add(.outline(dest, ink.frame, radius: 8, width: 1))

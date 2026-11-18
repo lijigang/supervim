@@ -173,6 +173,7 @@ These also differ from Vimium's defaults and are not marked on the sheet: there 
 - [手工验收清单 / Manual acceptance](docs/manual-acceptance.md)
 - [v0.1.5 证据：响应、偶发无响应、标签、外观 / v0.1.5 evidence: latency, missed keys, hints, look](docs/v0.1.5-evidence.md)
 - [界面打磨和预览图 / UI polish and previews](docs/ui-polish.md)
+- [提示标签改版方案 / Hint label redesign options](docs/label-redesign.md)
 
 规格文末单独列出了尚未能保证的平台行为。那些条目没有改写已批准的要求。手工验收清单把还没在真机上做过的项目收在一处。
 

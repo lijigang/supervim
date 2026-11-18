@@ -11,6 +11,9 @@ import SupervimCore
 public final class HintLabelPreviewView: NSView {
     public let style: HintLabelStyle
     public let labelCount: Int
+    /// Every label's frame, margin included, measured from the view's
+    /// top-left corner with y down.
+    public let labelFrames: [NSRect]
 
     /// `pass` is every marker of the hint pass when `markers` are only the
     /// ones left after `typedPrefix`, as the overlay remembers them.
@@ -39,6 +42,14 @@ public final class HintLabelPreviewView: NSView {
             return HintBadgeSize(width: Double(measured.width), height: Double(measured.height))
         }
         self.labelCount = arrangement.labels.count
+        self.labelFrames = arrangement.labels.map { label in
+            NSRect(
+                x: CGFloat(label.box.frame.x),
+                y: size.height - CGFloat(label.box.frame.y + label.box.frame.height),
+                width: CGFloat(label.box.frame.width),
+                height: CGFloat(label.box.frame.height)
+            )
+        }
         super.init(frame: NSRect(origin: .zero, size: size))
         for group in arrangement.panels {
             let canvas = HintCanvasView(frame: NSRect(
